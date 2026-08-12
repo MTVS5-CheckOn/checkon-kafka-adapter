@@ -31,7 +31,7 @@ Adapter Outbox -> completed/failed topic -> CheckOn Backend
 
 CheckOn 백엔드 Compose의 Kafka를 호스트 프로세스에서 사용할 때 주소는 `localhost:9094`입니다. Docker 네트워크 안에서 실행한다면 현재 백엔드 Compose의 내부 주소인 `kafka:19092`를 사용해야 합니다. 기존 AsyncAPI의 `kafka:9092` 표기는 실제 Compose와 다릅니다.
 
-1. `.env.example`을 참고해 로컬 환경변수를 설정합니다. `.env`는 Git에서 제외됩니다.
+1. `.env.example`을 복사해 `.env`를 만들고 실제 로컬 값을 설정합니다. 애플리케이션은 이 파일을 자동으로 읽으며, `.env`는 Git에서 제외됩니다. 배포 환경에서는 같은 이름의 환경변수를 사용합니다.
 2. Adapter 전용 PostgreSQL 데이터베이스와 계정을 준비합니다.
 3. AI 팀 확정 전에는 두 AI 활성화 값을 `false`로 유지합니다.
 4. 저장소 루트에서 다음을 실행합니다.

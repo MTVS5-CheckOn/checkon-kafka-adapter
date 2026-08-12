@@ -38,4 +38,9 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+    // A developer's local .env must not enable runtime workers in context tests.
+    // Integration tests that need them set their own higher-priority properties.
+    systemProperty 'checkon.ai.risk-detection.enabled', 'false'
+    systemProperty 'checkon.ai.risk-detection.worker-enabled', 'false'
+    systemProperty 'checkon.kafka.risk-detection.enabled', 'false'
 }

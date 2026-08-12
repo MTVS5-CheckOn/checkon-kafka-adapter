@@ -1,4 +1,8 @@
 spring:
+  config:
+    # .env is a Java properties-compatible file. It is optional so CI and
+    # deployment environments can continue to supply ordinary environment variables.
+    import: "optional:file:.env[.properties]"
   application:
     name: checkon-kafka-adapter
   kafka:
@@ -27,6 +31,9 @@ spring:
     url: ${FLYWAY_DB_URL}
     user: ${FLYWAY_DB_USER}
     password: ${FLYWAY_DB_PASSWORD}
+
+server:
+  port: ${SERVER_PORT:8081}
 
 checkon:
   ai:
