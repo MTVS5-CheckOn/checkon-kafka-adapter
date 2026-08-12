@@ -1,0 +1,28 @@
+spring:
+  application:
+    name: checkon-kafka-adapter
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9094}
+    consumer:
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      enable-auto-commit: false
+      properties:
+        isolation.level: read_committed
+        max.partition.fetch.bytes: 3145728
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        acks: all
+        enable.idempotence: true
+        max.request.size: 3145728
+
+checkon:
+  kafka:
+    risk-detection:
+      enabled: ${RISK_DETECTION_KAFKA_ENABLED:false}
+      requested-topic: ${RISK_DETECTION_REQUESTED_TOPIC:checkon.risk-detection.requested.v1}
+      completed-topic: ${RISK_DETECTION_COMPLETED_TOPIC:checkon.risk-detection.completed.v1}
+      failed-topic: ${RISK_DETECTION_FAILED_TOPIC:checkon.risk-detection.failed.v1}
+      consumer-group-id: ${RISK_DETECTION_CONSUMER_GROUP:checkon-ai-adapter-risk-detection-v1}

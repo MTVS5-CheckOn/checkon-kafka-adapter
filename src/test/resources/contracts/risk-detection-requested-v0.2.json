@@ -1,0 +1,48 @@
+{
+  "event_id": "019b0000-0000-7000-8000-000000000011",
+  "event_type": "risk-detection.requested",
+  "schema_version": "1.0",
+  "correlation_id": "019b0000-0000-7000-8000-000000000001",
+  "causation_id": "019b0000-0000-7000-8000-000000000011",
+  "tenant_alias": "tn_0123456789abcdef0123456789abcdef",
+  "run_id": "019b0000-0000-7000-8000-000000000001",
+  "attempt_id": "019b0000-0000-7000-8000-000000000002",
+  "request_id": "019b0000-0000-7000-8000-000000000002",
+  "idempotency_key": "tn_0123456789abcdef0123456789abcdef:2026-08-12",
+  "snapshot_hash": "sha256:20826dda25119fd1cd96c712c2f6a3180fdbca51e8a3503341501f8b5bda3823",
+  "occurred_at": "2026-08-12T00:00:00Z",
+  "payload": {
+    "snapshot_meta": {
+      "week_start": "2026-08-10",
+      "snapshot_hash": "sha256:20826dda25119fd1cd96c712c2f6a3180fdbca51e8a3503341501f8b5bda3823",
+      "term_context": "2026-2",
+      "classes": [
+        {
+          "class_ref": "cl_0123456789abcdef0123456789abcdef"
+        }
+      ]
+    },
+    "students": [
+      {
+        "student_ref": "st_abcdef0123456789abcdef0123456789",
+        "class_ref": "cl_0123456789abcdef0123456789abcdef",
+        "enrolled_weeks": 8,
+        "status": "active",
+        "consent": "granted"
+      }
+    ],
+    "learning_events": [],
+    "alert_context": [],
+    "detection_evidence": [
+      {
+        "kind": "assignment_window",
+        "source_table": "assignment_week_summary",
+        "record_id": "assignment-week-1",
+        "student_ref": "st_abcdef0123456789abcdef0123456789",
+        "week_start": "2026-08-10",
+        "expected_count": 2,
+        "submitted_count": 1
+      }
+    ]
+  }
+}
