@@ -21,6 +21,13 @@ spring:
       ack-mode: record
 
 checkon:
+  ai:
+    risk-detection:
+      enabled: ${AI_RISK_DETECTION_ENABLED:false}
+      base-url: ${AI_BASE_URL:}
+      detect-path: ${AI_DETECT_PATH:}
+      connect-timeout: ${AI_CONNECT_TIMEOUT:}
+      read-timeout: ${AI_READ_TIMEOUT:}
   kafka:
     risk-detection:
       enabled: ${RISK_DETECTION_KAFKA_ENABLED:false}

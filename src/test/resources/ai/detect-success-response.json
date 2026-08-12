@@ -1,0 +1,20 @@
+{
+  "data": {
+    "signals": [],
+    "stats": {
+      "students_evaluated": 1,
+      "signals_raised": 0,
+      "excluded_under_2w": 0,
+      "capped_out": 0,
+      "rules_skipped": []
+    }
+  },
+  "error": null,
+  "meta": {
+    "execution_id": "ai-execution-1",
+    "versions": {
+      "contract": "0.1",
+      "pipeline": "0.1.0"
+    }
+  }
+}
