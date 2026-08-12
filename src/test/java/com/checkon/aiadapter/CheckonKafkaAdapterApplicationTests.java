@@ -9,7 +9,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 
 import com.checkon.aiadapter.common.kafka.RiskDetectionKafkaProperties;
 
-@SpringBootTest
+@SpringBootTest(properties = "spring.autoconfigure.exclude="
+	+ "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
+	+ "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration")
 class CheckonKafkaAdapterApplicationTests {
 
 	@Autowired

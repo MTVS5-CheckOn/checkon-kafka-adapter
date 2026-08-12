@@ -1,4 +1,8 @@
 spring:
+  config:
+    # .env is a Java properties-compatible file. It is optional so CI and
+    # deployment environments can continue to supply ordinary environment variables.
+    import: "optional:file:.env[.properties]"
   application:
     name: checkon-kafka-adapter
   kafka:
@@ -17,8 +21,33 @@ spring:
         acks: all
         enable.idempotence: true
         max.request.size: 3145728
+    listener:
+      ack-mode: record
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+  flyway:
+    url: ${FLYWAY_DB_URL}
+    user: ${FLYWAY_DB_USER}
+    password: ${FLYWAY_DB_PASSWORD}
+
+server:
+  port: ${SERVER_PORT:8081}
 
 checkon:
+  ai:
+    risk-detection:
+      enabled: ${AI_RISK_DETECTION_ENABLED:false}
+      base-url: ${AI_BASE_URL:}
+      detect-path: ${AI_DETECT_PATH:}
+      connect-timeout: ${AI_CONNECT_TIMEOUT:}
+      read-timeout: ${AI_READ_TIMEOUT:}
+      worker-enabled: ${AI_RISK_DETECTION_WORKER_ENABLED:false}
+      poll-delay: ${AI_RISK_DETECTION_POLL_DELAY:1s}
+      lock-timeout: ${AI_RISK_DETECTION_LOCK_TIMEOUT:30s}
+      retry-initial-delay: ${AI_RISK_DETECTION_RETRY_INITIAL_DELAY:1s}
+      max-attempts: ${AI_RISK_DETECTION_MAX_ATTEMPTS:3}
   kafka:
     risk-detection:
       enabled: ${RISK_DETECTION_KAFKA_ENABLED:false}
@@ -26,3 +55,8 @@ checkon:
       completed-topic: ${RISK_DETECTION_COMPLETED_TOPIC:checkon.risk-detection.completed.v1}
       failed-topic: ${RISK_DETECTION_FAILED_TOPIC:checkon.risk-detection.failed.v1}
       consumer-group-id: ${RISK_DETECTION_CONSUMER_GROUP:checkon-ai-adapter-risk-detection-v1}
+      outbox-poll-delay: ${RISK_DETECTION_OUTBOX_POLL_DELAY:1s}
+      outbox-lock-timeout: ${RISK_DETECTION_OUTBOX_LOCK_TIMEOUT:30s}
+      outbox-retry-delay: ${RISK_DETECTION_OUTBOX_RETRY_DELAY:5s}
+      producer-send-timeout: ${RISK_DETECTION_PRODUCER_SEND_TIMEOUT:10s}
+      outbox-max-attempts: ${RISK_DETECTION_OUTBOX_MAX_ATTEMPTS:8}
