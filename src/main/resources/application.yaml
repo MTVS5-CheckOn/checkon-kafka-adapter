@@ -17,6 +17,8 @@ spring:
         acks: all
         enable.idempotence: true
         max.request.size: 3145728
+    listener:
+      ack-mode: record
 
 checkon:
   kafka:
