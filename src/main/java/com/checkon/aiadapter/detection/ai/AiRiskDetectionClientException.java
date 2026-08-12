@@ -39,6 +39,15 @@ public class AiRiskDetectionClientException extends RuntimeException {
 		return httpStatus;
 	}
 
+	public boolean isTransientFailure() {
+		if (reason == Reason.NETWORK_ERROR) {
+			return true;
+		}
+		return reason == Reason.HTTP_ERROR
+			&& httpStatus != null
+			&& (httpStatus == 408 || httpStatus == 429 || httpStatus >= 500);
+	}
+
 	public enum Reason {
 		IDEMPOTENCY_CONFLICT,
 		HTTP_ERROR,
