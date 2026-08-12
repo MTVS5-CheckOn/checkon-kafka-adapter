@@ -8,6 +8,7 @@ import org.springframework.kafka.annotation.RetryableTopic;
 import org.springframework.stereotype.Component;
 
 import com.checkon.aiadapter.detection.application.RiskDetectionRequestHandler;
+import com.checkon.aiadapter.detection.application.RiskDetectionRequestConflictException;
 
 @Component
 @ConditionalOnProperty(
@@ -33,7 +34,10 @@ public class KafkaRiskDetectionRequestListener {
 		backOff = @BackOff(delay = 1_000, multiplier = 2.0),
 		dltTopicSuffix = ".dlt",
 		autoCreateTopics = "false",
-		exclude = InvalidRiskDetectionRequestException.class
+		exclude = {
+			InvalidRiskDetectionRequestException.class,
+			RiskDetectionRequestConflictException.class
+		}
 	)
 	@KafkaListener(
 		topics = "${checkon.kafka.risk-detection.requested-topic}",

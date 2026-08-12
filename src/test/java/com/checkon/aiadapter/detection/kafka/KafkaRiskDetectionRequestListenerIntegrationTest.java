@@ -39,7 +39,10 @@ import com.checkon.aiadapter.detection.application.RiskDetectionRequestHandler;
 @Testcontainers
 @SpringBootTest(properties = {
 	"checkon.kafka.risk-detection.enabled=true",
-	"spring.kafka.consumer.auto-offset-reset=earliest"
+	"spring.kafka.consumer.auto-offset-reset=earliest",
+	"spring.autoconfigure.exclude="
+		+ "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
+		+ "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration"
 })
 @Import(KafkaRiskDetectionRequestListenerIntegrationTest.TopicConfiguration.class)
 class KafkaRiskDetectionRequestListenerIntegrationTest {
