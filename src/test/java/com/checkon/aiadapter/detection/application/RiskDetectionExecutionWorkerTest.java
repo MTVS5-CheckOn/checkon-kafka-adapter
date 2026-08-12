@@ -48,12 +48,17 @@ class RiskDetectionExecutionWorkerTest {
 
 	private RiskDetectionExecutionWorker worker;
 	private RiskDetectionRequestedEvent event;
+	private String requestBody;
 
 	@BeforeEach
 	void setUp() throws Exception {
 		worker = new RiskDetectionExecutionWorker(
 			inboxRepository, aiClient, outcomeCoordinator, properties, clock);
-		event = objectMapper.readValue(readFixture(), RiskDetectionRequestedEvent.class);
+		String rawEvent = readFixture();
+		event = objectMapper.readValue(rawEvent, RiskDetectionRequestedEvent.class);
+		requestBody = objectMapper.writeValueAsString(
+			objectMapper.readTree(rawEvent).get("payload")
+		);
 	}
 
 	@Test
@@ -61,8 +66,8 @@ class RiskDetectionExecutionWorkerTest {
 	void schedulesTransientRetry() {
 		// Given
 		when(inboxRepository.claimNext(NOW, properties.lockTimeout()))
-			.thenReturn(Optional.of(new ClaimedRequest(event, 1)));
-		when(aiClient.detect(event.payload(), headers()))
+			.thenReturn(Optional.of(new ClaimedRequest(event, requestBody, 1)));
+		when(aiClient.detectRaw(requestBody, headers()))
 			.thenThrow(AiRiskDetectionClientException.httpError(503, null));
 
 		// When
@@ -84,8 +89,8 @@ class RiskDetectionExecutionWorkerTest {
 	void failsAfterRetryExhaustion() {
 		// Given
 		when(inboxRepository.claimNext(NOW, properties.lockTimeout()))
-			.thenReturn(Optional.of(new ClaimedRequest(event, 3)));
-		when(aiClient.detect(event.payload(), headers()))
+			.thenReturn(Optional.of(new ClaimedRequest(event, requestBody, 3)));
+		when(aiClient.detectRaw(requestBody, headers()))
 			.thenThrow(AiRiskDetectionClientException.httpError(503, null));
 
 		// When
@@ -107,8 +112,8 @@ class RiskDetectionExecutionWorkerTest {
 		// Given
 		AiDetectionResponse response = mock(AiDetectionResponse.class);
 		when(inboxRepository.claimNext(NOW, properties.lockTimeout()))
-			.thenReturn(Optional.of(new ClaimedRequest(event, 1)));
-		when(aiClient.detect(event.payload(), headers())).thenReturn(response);
+			.thenReturn(Optional.of(new ClaimedRequest(event, requestBody, 1)));
+		when(aiClient.detectRaw(requestBody, headers())).thenReturn(response);
 		doThrow(new InvalidAiDetectionResponseException("invalid"))
 			.when(outcomeCoordinator).complete(event, response);
 

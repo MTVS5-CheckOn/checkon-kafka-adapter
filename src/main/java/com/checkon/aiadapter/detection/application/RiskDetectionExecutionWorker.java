@@ -6,6 +6,8 @@ import java.time.Instant;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.checkon.aiadapter.detection.ai.AiDetectionRequestHeaders;
 import com.checkon.aiadapter.detection.ai.AiDetectionResponse;
@@ -22,6 +24,8 @@ import com.checkon.aiadapter.detection.kafka.RiskDetectionRequestedEvent;
 	havingValue = "true"
 )
 public class RiskDetectionExecutionWorker {
+	private static final Logger log = LoggerFactory.getLogger(
+		RiskDetectionExecutionWorker.class);
 
 	private final RiskDetectionInboxRepository inboxRepository;
 	private final AiRiskDetectionClient aiClient;
@@ -61,8 +65,8 @@ public class RiskDetectionExecutionWorker {
 	private boolean execute(ClaimedRequest claimed) {
 		RiskDetectionRequestedEvent event = claimed.event();
 		try {
-			AiDetectionResponse response = aiClient.detect(
-				event.payload(),
+			AiDetectionResponse response = aiClient.detectRaw(
+				claimed.requestBody(),
 				new AiDetectionRequestHeaders(
 					event.tenantAlias(), event.requestId(), event.idempotencyKey())
 			);
@@ -91,7 +95,23 @@ public class RiskDetectionExecutionWorker {
 			outcomeCoordinator.retry(event.eventId(), nextAttemptAt, code);
 			return;
 		}
-		outcomeCoordinator.fail(event, code, failureMessage(exception), null);
+		String responseBody = safeResponseBody(exception.responseBody());
+		if (responseBody != null) {
+			log.warn("AI detection request rejected: runId={}, httpStatus={}, response={}",
+				event.runId(), exception.httpStatus(), responseBody);
+		}
+		outcomeCoordinator.fail(
+			event, code, failureMessage(exception), responseBody);
+	}
+
+	private String safeResponseBody(String responseBody) {
+		if (responseBody == null || responseBody.isBlank()) {
+			return null;
+		}
+		String singleLine = responseBody.replace('\r', ' ').replace('\n', ' ');
+		return singleLine.length() <= 2_000
+			? singleLine
+			: singleLine.substring(0, 2_000);
 	}
 
 	private String failureCode(AiRiskDetectionClientException exception) {

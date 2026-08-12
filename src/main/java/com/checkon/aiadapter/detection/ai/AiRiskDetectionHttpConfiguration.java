@@ -8,6 +8,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
+import tools.jackson.databind.ObjectMapper;
+
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(
 	prefix = "checkon.ai.risk-detection",
@@ -17,9 +19,13 @@ import org.springframework.web.client.RestClient;
 public class AiRiskDetectionHttpConfiguration {
 
 	@Bean
-	AiRiskDetectionClient aiRiskDetectionClient(AiRiskDetectionHttpProperties properties) {
+	AiRiskDetectionClient aiRiskDetectionClient(
+		AiRiskDetectionHttpProperties properties,
+		ObjectMapper objectMapper
+	) {
 		HttpClient httpClient = HttpClient.newBuilder()
 			.connectTimeout(properties.requiredConnectTimeout())
+			.version(HttpClient.Version.HTTP_1_1)
 			.build();
 		JdkClientHttpRequestFactory requestFactory =
 			new JdkClientHttpRequestFactory(httpClient);
@@ -30,7 +36,8 @@ public class AiRiskDetectionHttpConfiguration {
 				.baseUrl(properties.requiredBaseUri().toString())
 				.requestFactory(requestFactory)
 				.build(),
-			properties.requiredDetectPath()
+			properties.requiredDetectPath(),
+			objectMapper
 		);
 	}
 }

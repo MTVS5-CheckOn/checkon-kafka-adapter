@@ -54,6 +54,6 @@ public class KafkaRiskDetectionRequestListener {
 				exception
 			);
 		}
-		handler.handle(event);
+		handler.handle(event, record.value());
 	}
 }

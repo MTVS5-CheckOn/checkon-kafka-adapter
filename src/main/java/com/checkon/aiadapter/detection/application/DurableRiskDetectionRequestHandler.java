@@ -31,9 +31,9 @@ public class DurableRiskDetectionRequestHandler implements RiskDetectionRequestH
 
 	@Override
 	@Transactional
-	public void handle(RiskDetectionRequestedEvent event) {
+	public void handle(RiskDetectionRequestedEvent event, String rawEvent) {
 		RiskDetectionInboxRepository.Registration registration =
-			inboxRepository.register(event, Instant.now(clock));
+			inboxRepository.register(event, rawEvent, Instant.now(clock));
 		if (registration == RiskDetectionInboxRepository.Registration.CONFLICT) {
 			throw new RiskDetectionRequestConflictException(event.eventId());
 		}

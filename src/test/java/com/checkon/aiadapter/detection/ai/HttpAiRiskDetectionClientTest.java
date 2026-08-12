@@ -21,6 +21,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -50,7 +51,9 @@ class HttpAiRiskDetectionClientTest {
 	void setUp() throws Exception {
 		RestClient.Builder builder = RestClient.builder().baseUrl("http://ai.example.test");
 		server = MockRestServiceServer.bindTo(builder).build();
-		client = new HttpAiRiskDetectionClient(builder.build(), "/v1/detect");
+		client = new HttpAiRiskDetectionClient(
+			builder.build(), "/v1/detect", objectMapper
+		);
 
 		RiskDetectionRequestedEvent event = objectMapper.readValue(
 			readFixture("contracts/risk-detection-requested-v0.2.json"),
@@ -85,6 +88,72 @@ class HttpAiRiskDetectionClientTest {
 	}
 
 	@Test
+	@DisplayName("Given Kafka 원본 payload When AI HTTP API를 호출하면 Then JSON 문자열을 변경하지 않는다")
+	void sendsRawKafkaPayloadWithoutDtoReserialization() throws Exception {
+		// Given
+		String rawEvent = readFixture("contracts/risk-detection-requested-v0.2.json");
+		String requestBody = objectMapper.writeValueAsString(
+			objectMapper.readTree(rawEvent).get("payload")
+		);
+		server.expect(once(), requestTo("http://ai.example.test/v1/detect"))
+			.andExpect(method(POST))
+			.andExpect(content().string(requestBody))
+			.andRespond(withSuccess(
+				readFixture("ai/detect-success-response.json"), APPLICATION_JSON));
+
+		// When
+		AiDetectionResponse response = client.detectRaw(requestBody, headers);
+
+		// Then
+		assertThat(response.error()).isNull();
+		server.verify();
+	}
+
+	@Test
+	@DisplayName("Given 실제 HTTP 서버 When 원본 payload를 보내면 Then wire body가 JSON과 동일하다")
+	void sendsExactJsonOverRealHttpConnection() throws Exception {
+		// Given
+		String requestBody = objectMapper.writeValueAsString(request);
+		AtomicReference<byte[]> received = new AtomicReference<>();
+		AtomicReference<String> contentType = new AtomicReference<>();
+		AtomicReference<String> contentLength = new AtomicReference<>();
+		HttpServer captureServer = HttpServer.create(
+			new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+		captureServer.createContext("/v1/detect", exchange -> {
+			try (exchange) {
+				received.set(exchange.getRequestBody().readAllBytes());
+				contentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
+				contentLength.set(exchange.getRequestHeaders().getFirst("Content-Length"));
+				byte[] response = readFixture("ai/detect-success-response.json")
+					.getBytes(StandardCharsets.UTF_8);
+				exchange.getResponseHeaders().set("Content-Type", "application/json");
+				exchange.sendResponseHeaders(200, response.length);
+				exchange.getResponseBody().write(response);
+			}
+		});
+		captureServer.start();
+		try {
+			HttpAiRiskDetectionClient wireClient = new HttpAiRiskDetectionClient(
+				RestClient.builder().baseUrl("http://127.0.0.1:"
+					+ captureServer.getAddress().getPort()).build(),
+				"/v1/detect", objectMapper);
+
+			// When
+			wireClient.detectRaw(requestBody, headers);
+
+			// Then
+			assertThat(new String(received.get(), StandardCharsets.UTF_8))
+				.isEqualTo(requestBody);
+			assertThat(contentType.get()).startsWith("application/json");
+			assertThat(contentLength.get()).isEqualTo(String.valueOf(
+				requestBody.getBytes(StandardCharsets.UTF_8).length));
+		}
+		finally {
+			captureServer.stop(0);
+		}
+	}
+
+	@Test
 	@DisplayName("Given 같은 멱등 키의 다른 요청 When AI가 409를 반환하면 Then 멱등 충돌로 분류한다")
 	void mapsIdempotencyConflict() {
 		// Given
@@ -108,8 +177,11 @@ class HttpAiRiskDetectionClientTest {
 	@DisplayName("Given AI 일시 장애 When 503을 반환하면 Then HTTP 상태를 보존한다")
 	void mapsHttpFailureWithoutDecidingRetryPolicy() {
 		// Given
+		String errorBody = "{\"error\":{\"code\":\"INVALID_SCHEMA\","
+			+ "\"message\":\"invalid\",\"detail\":{\"field\":\"students.0\"}}}";
 		server.expect(once(), requestTo("http://ai.example.test/v1/detect"))
-			.andRespond(withStatus(SERVICE_UNAVAILABLE));
+			.andRespond(withStatus(SERVICE_UNAVAILABLE)
+				.contentType(APPLICATION_JSON).body(errorBody));
 
 		// When/Then
 		assertThatThrownBy(() -> client.detect(request, headers))
@@ -120,6 +192,7 @@ class HttpAiRiskDetectionClientTest {
 				assertThat(clientException.reason())
 					.isEqualTo(AiRiskDetectionClientException.Reason.HTTP_ERROR);
 				assertThat(clientException.httpStatus()).isEqualTo(503);
+				assertThat(clientException.responseBody()).isEqualTo(errorBody);
 			});
 		server.verify();
 	}
@@ -172,7 +245,9 @@ class HttpAiRiskDetectionClientTest {
 				Duration.ofMillis(50)
 			);
 			AiRiskDetectionClient timeoutClient =
-				new AiRiskDetectionHttpConfiguration().aiRiskDetectionClient(properties);
+				new AiRiskDetectionHttpConfiguration().aiRiskDetectionClient(
+					properties, objectMapper
+				);
 
 			// When/Then
 			assertThatThrownBy(() -> timeoutClient.detect(request, headers))

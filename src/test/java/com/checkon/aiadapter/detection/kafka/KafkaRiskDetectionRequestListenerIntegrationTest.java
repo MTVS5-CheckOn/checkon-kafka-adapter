@@ -72,10 +72,13 @@ class KafkaRiskDetectionRequestListenerIntegrationTest {
 			.get(10, TimeUnit.SECONDS);
 
 		// Then
-		verify(handler, timeout(15_000)).handle(org.mockito.ArgumentMatchers.argThat(event ->
-			event.eventId().equals(UUID.fromString("019b0000-0000-7000-8000-000000000011"))
-				&& event.payload().detectionEvidence().size() == 1
-		));
+		verify(handler, timeout(15_000)).handle(
+			org.mockito.ArgumentMatchers.argThat(event ->
+				event.eventId().equals(UUID.fromString("019b0000-0000-7000-8000-000000000011"))
+					&& event.payload().detectionEvidence().size() == 1
+			),
+			org.mockito.ArgumentMatchers.eq(rawEvent)
+		);
 	}
 
 	@Test

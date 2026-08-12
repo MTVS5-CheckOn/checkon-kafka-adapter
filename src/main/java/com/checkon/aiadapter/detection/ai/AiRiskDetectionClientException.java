@@ -4,31 +4,51 @@ public class AiRiskDetectionClientException extends RuntimeException {
 
 	private final Reason reason;
 	private final Integer httpStatus;
+	private final String responseBody;
 
 	private AiRiskDetectionClientException(
 		Reason reason,
 		Integer httpStatus,
+		String responseBody,
 		Throwable cause
 	) {
 		super(reason.name(), cause);
 		this.reason = reason;
 		this.httpStatus = httpStatus;
+		this.responseBody = responseBody;
 	}
 
 	public static AiRiskDetectionClientException idempotencyConflict(Throwable cause) {
-		return new AiRiskDetectionClientException(Reason.IDEMPOTENCY_CONFLICT, 409, cause);
+		return idempotencyConflict(null, cause);
+	}
+
+	public static AiRiskDetectionClientException idempotencyConflict(
+		String responseBody,
+		Throwable cause
+	) {
+		return new AiRiskDetectionClientException(
+			Reason.IDEMPOTENCY_CONFLICT, 409, responseBody, cause);
 	}
 
 	public static AiRiskDetectionClientException httpError(int status, Throwable cause) {
-		return new AiRiskDetectionClientException(Reason.HTTP_ERROR, status, cause);
+		return httpError(status, null, cause);
+	}
+
+	public static AiRiskDetectionClientException httpError(
+		int status,
+		String responseBody,
+		Throwable cause
+	) {
+		return new AiRiskDetectionClientException(
+			Reason.HTTP_ERROR, status, responseBody, cause);
 	}
 
 	public static AiRiskDetectionClientException emptyResponse() {
-		return new AiRiskDetectionClientException(Reason.EMPTY_RESPONSE, null, null);
+		return new AiRiskDetectionClientException(Reason.EMPTY_RESPONSE, null, null, null);
 	}
 
 	public static AiRiskDetectionClientException networkError(Throwable cause) {
-		return new AiRiskDetectionClientException(Reason.NETWORK_ERROR, null, cause);
+		return new AiRiskDetectionClientException(Reason.NETWORK_ERROR, null, null, cause);
 	}
 
 	public Reason reason() {
@@ -37,6 +57,10 @@ public class AiRiskDetectionClientException extends RuntimeException {
 
 	public Integer httpStatus() {
 		return httpStatus;
+	}
+
+	public String responseBody() {
+		return responseBody;
 	}
 
 	public boolean isTransientFailure() {

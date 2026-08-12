@@ -82,6 +82,24 @@ class RiskDetectionDurabilityIntegrationTest {
 	}
 
 	@Test
+	@DisplayName("Given Kafka 원본 이벤트 When Inbox에서 claim하면 Then AI payload 표현을 그대로 복구한다")
+	void preservesRawAiPayloadThroughInbox() throws Exception {
+		// Given
+		String rawEvent = readFixture();
+		RiskDetectionRequestedEvent decoded = objectMapper.readValue(
+			rawEvent, RiskDetectionRequestedEvent.class);
+		inboxRepository.register(decoded, rawEvent, now);
+
+		// When
+		var claimed = inboxRepository.claimNext(now, Duration.ofSeconds(30))
+			.orElseThrow();
+
+		// Then
+		assertThat(objectMapper.readTree(claimed.requestBody()))
+			.isEqualTo(objectMapper.readTree(rawEvent).get("payload"));
+	}
+
+	@Test
 	@DisplayName("Given 같은 event_id When 동일 payload가 재수신되면 Then 한 행만 저장하고 중복으로 판정한다")
 	void deduplicatesIdenticalRequestEvent() {
 		// Given/When
@@ -226,7 +244,7 @@ class RiskDetectionDurabilityIntegrationTest {
 	private AiDetectionResponse responseForStudent(String studentRef) {
 		AiDetectionResponse.Signal signal = new AiDetectionResponse.Signal(
 			"signal-1", studentRef, "cl_0123456789abcdef0123456789abcdef",
-			"R1", "acc_drop", "정답률 하락", 1.0, 1, "new",
+			"R1", "acc_drop", "정답률 하락", 1.0, 1, false, "new",
 			new AiDetectionResponse.Brief("확인이 필요합니다", true, false),
 			List.of()
 		);

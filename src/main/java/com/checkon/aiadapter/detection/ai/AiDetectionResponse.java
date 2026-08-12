@@ -23,6 +23,7 @@ public record AiDetectionResponse(
 		@JsonProperty("display_label") String displayLabel,
 		double score,
 		int rank,
+		Boolean advisory,
 		String lifecycle,
 		Brief brief,
 		List<Evidence> evidence

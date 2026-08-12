@@ -34,7 +34,15 @@ public class RiskDetectionInboxRepository {
 	}
 
 	public Registration register(RiskDetectionRequestedEvent event, Instant now) {
-		String payload = write(event);
+		return register(event, write(event), now);
+	}
+
+	public Registration register(
+		RiskDetectionRequestedEvent event,
+		String rawEvent,
+		Instant now
+	) {
+		String payload = requireJson(rawEvent);
 		int inserted = jdbcTemplate.update("""
 			INSERT INTO risk_detection_request_inbox (
 			    event_id, tenant_alias, run_id, attempt_id, request_id,
@@ -85,8 +93,8 @@ public class RiskDetectionInboxRepository {
 			WHERE inbox.event_id = candidate.event_id
 			RETURNING inbox.event_payload::text, inbox.http_attempts
 			""",
-			(resultSet, rowNumber) -> new ClaimedRequest(
-				read(resultSet.getString(1)), resultSet.getInt(2)),
+			(resultSet, rowNumber) -> claimedRequest(
+				resultSet.getString(1), resultSet.getInt(2)),
 			Timestamp.from(now), Timestamp.from(staleBefore),
 			Timestamp.from(now), Timestamp.from(now)
 		);
@@ -156,6 +164,37 @@ public class RiskDetectionInboxRepository {
 		}
 	}
 
+	private ClaimedRequest claimedRequest(String eventPayload, int httpAttempt) {
+		try {
+			JsonNode root = objectMapper.readTree(eventPayload);
+			JsonNode aiPayload = root.get("payload");
+			if (aiPayload == null || aiPayload.isNull()) {
+				throw new IllegalStateException("Stored risk detection payload is missing");
+			}
+			return new ClaimedRequest(
+				objectMapper.treeToValue(root, RiskDetectionRequestedEvent.class),
+				objectMapper.writeValueAsString(aiPayload),
+				httpAttempt
+			);
+		}
+		catch (JacksonException exception) {
+			throw new IllegalStateException("Stored risk detection event is invalid", exception);
+		}
+	}
+
+	private String requireJson(String payload) {
+		if (payload == null || payload.isBlank()) {
+			throw new IllegalArgumentException("Risk detection event cannot be empty");
+		}
+		try {
+			objectMapper.readTree(payload);
+			return payload;
+		}
+		catch (JacksonException exception) {
+			throw new IllegalArgumentException("Risk detection event cannot be serialized", exception);
+		}
+	}
+
 	private boolean sameJson(String left, String right) {
 		try {
 			JsonNode leftNode = objectMapper.readTree(left);
@@ -173,6 +212,10 @@ public class RiskDetectionInboxRepository {
 		CONFLICT
 	}
 
-	public record ClaimedRequest(RiskDetectionRequestedEvent event, int httpAttempt) {
+	public record ClaimedRequest(
+		RiskDetectionRequestedEvent event,
+		String requestBody,
+		int httpAttempt
+	) {
 	}
 }

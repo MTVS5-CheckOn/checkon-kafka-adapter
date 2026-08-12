@@ -33,7 +33,7 @@ CheckOn 백엔드 Compose의 Kafka를 호스트 프로세스에서 사용할 때
 
 1. `.env.example`을 복사해 `.env`를 만들고 실제 로컬 값을 설정합니다. 애플리케이션은 이 파일을 자동으로 읽으며, `.env`는 Git에서 제외됩니다. 배포 환경에서는 같은 이름의 환경변수를 사용합니다.
 2. Adapter 전용 PostgreSQL 데이터베이스와 계정을 준비합니다.
-3. AI 팀 확정 전에는 두 AI 활성화 값을 `false`로 유지합니다.
+3. AI 연동 주소와 timeout을 확인하고, 로컬 왕복 테스트에서는 아래 세 활성화 값을 `true`로 설정합니다.
 4. 저장소 루트에서 다음을 실행합니다.
 
 ```powershell
@@ -41,7 +41,9 @@ CheckOn 백엔드 Compose의 Kafka를 호스트 프로세스에서 사용할 때
 .\gradlew.bat bootRun
 ```
 
-Kafka 소비와 AI worker를 실제로 활성화하려면 다음 두 값이 모두 필요합니다.
+로컬 왕복 테스트에서는 CheckOn Backend를 먼저 완전히 시작한 다음 이 Adapter를 시작합니다. Backend의 `scripts/run-local-kafka.ps1`은 과거 환경변수를 지우기 위해 Gradle daemon을 정리하므로, Adapter를 먼저 켜면 Adapter의 Gradle 실행도 함께 종료될 수 있습니다.
+
+Kafka 소비와 AI worker를 실제로 활성화하려면 다음 세 값을 모두 설정합니다.
 
 ```text
 RISK_DETECTION_KAFKA_ENABLED=true
@@ -49,7 +51,11 @@ AI_RISK_DETECTION_ENABLED=true
 AI_RISK_DETECTION_WORKER_ENABLED=true
 ```
 
+CheckOn Backend의 `RISK_DETECTION_HTTP_ADAPTER_ENABLED`는 반드시 `false`로 둡니다. 독립 Adapter와 Backend 내장 fallback을 동시에 켜면 같은 requested 이벤트가 두 번 처리됩니다.
+
 `AI_RISK_DETECTION_LOCK_TIMEOUT`은 connect timeout과 read timeout의 합보다 충분히 길게 설정해야 합니다. 그렇지 않으면 오래 걸리는 HTTP 요청이 stale 작업으로 오인될 수 있습니다.
+
+AI HTTP 호출은 HTTP/1.1로 고정합니다. 현재 AI 로컬 서버는 JDK HTTP 클라이언트의 기본 HTTP/2 업그레이드 요청에서 body를 빈 값처럼 읽어 `INVALID_SCHEMA`를 반환할 수 있습니다.
 
 ## 신뢰성 모델
 

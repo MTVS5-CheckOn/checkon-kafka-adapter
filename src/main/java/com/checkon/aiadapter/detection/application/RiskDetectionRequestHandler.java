@@ -9,5 +9,5 @@ import com.checkon.aiadapter.detection.kafka.RiskDetectionRequestedEvent;
 @FunctionalInterface
 public interface RiskDetectionRequestHandler {
 
-	void handle(RiskDetectionRequestedEvent event);
+	void handle(RiskDetectionRequestedEvent event, String rawEvent);
 }

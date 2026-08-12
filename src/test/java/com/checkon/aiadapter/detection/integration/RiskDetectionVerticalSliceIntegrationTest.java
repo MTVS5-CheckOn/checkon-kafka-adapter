@@ -1,6 +1,7 @@
 package com.checkon.aiadapter.detection.integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -21,6 +22,7 @@ import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -114,7 +116,8 @@ class RiskDetectionVerticalSliceIntegrationTest {
 	void publishesCompletedOutcomeEndToEnd() throws Exception {
 		// Given
 		AiDetectionResponse response = successfulResponse();
-		when(aiClient.detect(requestEvent.payload(), requestHeaders())).thenReturn(response);
+		when(aiClient.detectRaw(anyString(), org.mockito.ArgumentMatchers.eq(requestHeaders())))
+			.thenReturn(response);
 
 		// When
 		ConsumerRecord<String, String> completed;
@@ -140,14 +143,18 @@ class RiskDetectionVerticalSliceIntegrationTest {
 		assertThat(outcome.get("request_id").asText()).isEqualTo(requestEvent.requestId());
 		assertThat(inboxStatus()).isEqualTo("OUTCOME_PUBLISHED");
 		assertThat(outboxStatus()).isEqualTo("PUBLISHED");
-		verify(aiClient).detect(requestEvent.payload(), requestHeaders());
+		ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+		verify(aiClient).detectRaw(bodyCaptor.capture(),
+			org.mockito.ArgumentMatchers.eq(requestHeaders()));
+		assertThat(objectMapper.readTree(bodyCaptor.getValue()))
+			.isEqualTo(objectMapper.readTree(rawRequest).get("payload"));
 	}
 
 	@Test
 	@DisplayName("Given AI 멱등 충돌 When Adapter가 처리하면 Then failed 이벤트를 발행한다")
 	void publishesFailedOutcomeForTerminalAiFailure() throws Exception {
 		// Given
-		when(aiClient.detect(requestEvent.payload(), requestHeaders()))
+		when(aiClient.detectRaw(anyString(), org.mockito.ArgumentMatchers.eq(requestHeaders())))
 			.thenThrow(com.checkon.aiadapter.detection.ai.AiRiskDetectionClientException
 				.idempotencyConflict(null));
 

@@ -6,4 +6,9 @@ public interface AiRiskDetectionClient {
 		AiDetectionRequest request,
 		AiDetectionRequestHeaders headers
 	);
+
+	AiDetectionResponse detectRaw(
+		String requestBody,
+		AiDetectionRequestHeaders headers
+	);
 }
