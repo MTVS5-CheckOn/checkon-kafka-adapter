@@ -25,7 +25,7 @@ Adapter는 CheckOn 백엔드 DB를 조회하지 않습니다. AI 입력의 선�
 - 현재 AI 로컬 서버 호환성을 위해 전송 프로토콜을 HTTP/1.1로 고정한다.
 - 400·409는 재시도하지 않고 failed로 변환한다. 네트워크·timeout·5xx만 횟수 제한 재시도한다.
 - 동일 key·동일 payload는 동일 결과를 반환하고, 동일 key·다른 payload는 409를 반환한다.
-- 응답의 `advisory`, `lifecycle`, evidence, `meta.execution_id`, `meta.versions`를 손실 없이 completed payload에 보존한다.
+- 응답의 structured signal(`metric`, `observed`, `baseline`, `sample_size`), `advisory`, `lifecycle`, structured evidence(`role`, `observed`, `sample_size`, `occurred_on`), `meta.execution_id`, `meta.versions`를 손실 없이 completed payload에 보존한다.
 # Problem Studio to AI mapping
 
 The frontend studio selects an area/type cell while the AI contract requires an

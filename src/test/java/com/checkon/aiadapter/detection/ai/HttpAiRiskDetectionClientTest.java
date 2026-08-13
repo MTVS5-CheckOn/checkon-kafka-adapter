@@ -20,6 +20,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -112,6 +113,45 @@ class HttpAiRiskDetectionClientTest {
 		assertThat(response.data().stats().r1ThresholdPp()).isNull();
 		assertThat(response.data().stats().r1ThresholdSource()).isNull();
 		assertThat(response.data().stats().r1PoolN()).isNull();
+		server.verify();
+	}
+
+	@Test
+	@DisplayName("Given structured signal and evidence When AI response is read Then every field is retained")
+	void retainsStructuredSignalAndEvidenceFields() {
+		server.expect(once(), requestTo("http://ai.example.test/v1/detect"))
+			.andRespond(withSuccess("""
+				{
+				  "data":{"signals":[{
+				    "signal_id":"signal-1","student_ref":"st_0123456789abcdef0123456789abcdef",
+				    "class_ref":"cl_0123456789abcdef0123456789abcdef","rule_id":"R1",
+				    "signal_type":"acc_drop","display_label":"정답률 하락",
+				    "metric":"accuracy","observed":0.5,"baseline":0.8,"sample_size":20,
+				    "score":1.0,"rank":1,"advisory":false,"lifecycle":"new",
+				    "brief":{"text":"확인이 필요합니다","gate_passed":true,"fallback_used":false},
+				    "evidence":[{"source_table":"learning_event","record_id":"le_1",
+				      "summary":"근거","role":"trigger","observed":0.5,
+				      "sample_size":20,"occurred_on":"2026-08-10"}]
+				  }],"stats":{"students_evaluated":1,"signals_raised":1,
+				    "excluded_under_2w":0,"capped_out":0,"rules_skipped":[]}},
+				  "error":null,"meta":{"execution_id":"structured","versions":{"contract":"0.2"}}
+				}
+				""", APPLICATION_JSON));
+
+		AiDetectionResponse response = client.detect(request, headers);
+
+		assertThat(response.data().signals()).singleElement().satisfies(signal -> {
+			assertThat(signal.metric()).isEqualTo("accuracy");
+			assertThat(signal.observed()).isEqualByComparingTo("0.5");
+			assertThat(signal.baseline()).isEqualByComparingTo("0.8");
+			assertThat(signal.sampleSize()).isEqualTo(20);
+			assertThat(signal.evidence()).singleElement().satisfies(evidence -> {
+				assertThat(evidence.role()).isEqualTo("trigger");
+				assertThat(evidence.observed()).isEqualByComparingTo("0.5");
+				assertThat(evidence.sampleSize()).isEqualTo(20);
+				assertThat(evidence.occurredOn()).isEqualTo(LocalDate.of(2026, 8, 10));
+			});
+		});
 		server.verify();
 	}
 
