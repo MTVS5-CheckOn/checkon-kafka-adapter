@@ -70,6 +70,12 @@ public class AiDetectionResponseValidator {
 				signal.evidence(), "signal.evidence")) {
 				requireText(evidence.sourceTable(), "evidence.source_table");
 				requireText(evidence.recordId(), "evidence.record_id");
+				if (!"trigger".equals(evidence.role()) && !"baseline".equals(evidence.role())) {
+					throw invalid("evidence.role must be trigger or baseline");
+				}
+				if (evidence.sampleSize() != null && evidence.sampleSize() < 0) {
+					throw invalid("evidence.sample_size must not be negative");
+				}
 				EvidenceKey key = new EvidenceKey(evidence.sourceTable(), evidence.recordId());
 				if (!detectionEvidence.contains(key)
 					&& !learningRecordIds.contains(evidence.recordId())) {

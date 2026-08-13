@@ -13,14 +13,15 @@ spring:
       enable-auto-commit: false
       properties:
         isolation.level: read_committed
-        max.partition.fetch.bytes: 3145728
+        max.partition.fetch.bytes: 6291456
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
       properties:
         acks: all
         enable.idempotence: true
-        max.request.size: 3145728
+        max.request.size: 6291456
+        compression.type: zstd
     listener:
       ack-mode: record
   datasource:
