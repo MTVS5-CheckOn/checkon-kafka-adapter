@@ -1,6 +1,7 @@
 package com.checkon.aiadapter.detection.ai;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -22,6 +23,10 @@ public record AiDetectionResponse(
 		@JsonProperty("rule_id") String ruleId,
 		@JsonProperty("signal_type") String signalType,
 		@JsonProperty("display_label") String displayLabel,
+		String metric,
+		BigDecimal observed,
+		BigDecimal baseline,
+		@JsonProperty("sample_size") Integer sampleSize,
 		double score,
 		int rank,
 		Boolean advisory,
@@ -29,6 +34,14 @@ public record AiDetectionResponse(
 		Brief brief,
 		List<Evidence> evidence
 	) {
+		public Signal(
+			String signalId, String studentRef, String classRef, String ruleId,
+			String signalType, String displayLabel, double score, int rank,
+			Boolean advisory, String lifecycle, Brief brief, List<Evidence> evidence
+		) {
+			this(signalId, studentRef, classRef, ruleId, signalType, displayLabel,
+				null, null, null, null, score, rank, advisory, lifecycle, brief, evidence);
+		}
 	}
 
 	public record Brief(
@@ -41,8 +54,15 @@ public record AiDetectionResponse(
 	public record Evidence(
 		@JsonProperty("source_table") String sourceTable,
 		@JsonProperty("record_id") String recordId,
-		String summary
+		String summary,
+		String role,
+		BigDecimal observed,
+		@JsonProperty("sample_size") Integer sampleSize,
+		@JsonProperty("occurred_on") LocalDate occurredOn
 	) {
+		public Evidence(String sourceTable, String recordId, String summary) {
+			this(sourceTable, recordId, summary, "trigger", null, null, null);
+		}
 	}
 
 	public record Stats(
