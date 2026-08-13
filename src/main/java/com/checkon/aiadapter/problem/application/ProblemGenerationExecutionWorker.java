@@ -3,6 +3,9 @@ package com.checkon.aiadapter.problem.application;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.List;
+import java.nio.charset.StandardCharsets;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -48,6 +51,9 @@ public class ProblemGenerationExecutionWorker {
 	}
 
 	private boolean execute(ClaimedRequest request) {
+		if(!Instant.now(clock).isBefore(request.createdAt().plus(properties.maxElapsed()))) {
+			saveFailure(request,"ADAPTER_TIME_LIMIT_EXCEEDED","timed_out"); return true;
+		}
 		Headers headers = new Headers(request.tenantAlias(), request.requestId(), request.idempotencyKey());
 		try {
 			if ("SUBMIT".equals(request.phase())) {
@@ -59,19 +65,29 @@ public class ProblemGenerationExecutionWorker {
 					now.plus(properties.pollInterval()), now);
 				return true;
 			}
-			JsonNode job = client.job(request.aiJobId(), headers);
+			var jobResponse = client.job(request.aiJobId(), headers);
+			JsonNode job = jobResponse.body();
 			String jobId = request.aiJobId();
 			String status = text(job.path("data"), "status").toLowerCase(Locale.ROOT);
 			if (status.equals("succeeded")) {
-				JsonNode items = client.items(jobId, headers);
-				saveSuccess(request, jobId, job, items);
+				String setId=text(job.path("data").path("result"),"set_id");
+				JsonNode items = client.items(setId, headers);
+				var details=new ArrayList<JsonNode>();
+				JsonNode summaries=items.path("data").get("items");
+				if(summaries==null||!summaries.isArray()) throw new IllegalArgumentException("items must be an array");
+				for(JsonNode summary:summaries) if(!summary.path("item_id").isNull())
+					details.add(client.item(setId,summary.path("slot_index").asInt(),headers));
+				saveSuccess(request, jobId, job, items,details);
 			}
 			else if (status.equals("failed") || status.equals("cancelled")) {
 				saveFailure(request, "AI_JOB_" + status.toUpperCase(Locale.ROOT));
 			}
 			else {
 				Instant now = Instant.now(clock);
-				store.markWaiting(request.eventId(), now.plus(properties.pollInterval()), now);
+				java.time.Duration delay=jobResponse.retryAfter()==null?properties.pollInterval():
+					(jobResponse.retryAfter().compareTo(properties.pollInterval())>0?jobResponse.retryAfter():properties.pollInterval());
+				Instant cap=request.createdAt().plus(properties.maxElapsed());
+				Instant next=now.plus(delay); store.markWaiting(request.eventId(),next.isAfter(cap)?cap:next,now);
 			}
 		}
 		catch (AiProblemClientException exception) {
@@ -86,18 +102,25 @@ public class ProblemGenerationExecutionWorker {
 		return true;
 	}
 
-	private void saveSuccess(ClaimedRequest request, String jobId, JsonNode job, JsonNode items) {
+	private void saveSuccess(ClaimedRequest request, String jobId, JsonNode job, JsonNode items,List<JsonNode> details) {
 		Instant now = Instant.now(clock);
 		var eventId = ids.next();
+		String outcome=outcomes.succeeded(eventId, request, jobId, job, items,details, now);
+		if(outcome.getBytes(StandardCharsets.UTF_8).length>properties.maxNormalizedResultBytes()) {
+			saveFailure(request,"RESULT_TOO_LARGE"); return;
+		}
 		store.saveOutcome(request.eventId(), eventId, kafka.resultTopic(), request.tenantAlias(),
-			outcomes.succeeded(eventId, request, jobId, job, items, now), now);
+			outcome, now);
 	}
 
 	private void saveFailure(ClaimedRequest request, String code) {
+		saveFailure(request,code,"failed");
+	}
+	private void saveFailure(ClaimedRequest request,String code,String childStatus) {
 		Instant now = Instant.now(clock);
 		var eventId = ids.next();
 		store.saveOutcome(request.eventId(), eventId, kafka.resultTopic(), request.tenantAlias(),
-			outcomes.failed(eventId, request, code, now), now);
+			outcomes.failed(eventId, request, code,childStatus, now), now);
 	}
 
 	private void handleFailure(ClaimedRequest request, String code, boolean transientFailure) {

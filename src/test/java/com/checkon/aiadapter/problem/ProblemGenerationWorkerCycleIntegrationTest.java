@@ -2,6 +2,7 @@ package com.checkon.aiadapter.problem;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
@@ -96,15 +97,19 @@ class ProblemGenerationWorkerCycleIntegrationTest {
 			{"data":{"job_id":"cycle-job","status":"queued"},"error":null,
 			 "meta":{"execution_id":"cycle-post-execution"}}
 			"""));
-		when(client.job(any(), any())).thenReturn(objectMapper.readTree("""
-			{"data":{"job_id":"cycle-job","status":"succeeded"},"error":null,
+		when(client.job(any(), any())).thenReturn(new AiProblemClient.JobResponse(objectMapper.readTree("""
+			{"data":{"job_id":"cycle-job","status":"succeeded","result":{"set_id":"cycle-set"}},"error":null,
 			 "meta":{"execution_id":"unstable-get-execution"}}
-			"""));
+			"""),Duration.ofSeconds(1)));
 		when(client.items(any(), any())).thenReturn(objectMapper.readTree("""
-			{"data":{"set_id":"cycle-set","items":[{"item_id":"cycle-item",
-			 "status":"needs_review","item":{"stem":"사이클 문제","choices":[{"no":1,"text":"정답"}],
-			 "answer":{"correct_no":1},"rationale":"사이클 근거"}}]},"error":null,
+			{"data":{"set_id":"cycle-set","status_counts":{"needs_review":1,"dropped":1},"items":[{"slot_index":0,"item_id":"cycle-item",
+			 "status":"needs_review","current_revision_no":0},{"slot_index":1,"item_id":null,"status":"dropped","current_revision_no":0,"failure_reason":"generation_exhausted"}]},"error":null,
 			 "meta":{"execution_id":"another-unstable-get-execution","versions":{"contract":"0.1"}}}
+			"""));
+		when(client.item(any(),anyInt(),any())).thenReturn(objectMapper.readTree("""
+			{"data":{"set_id":"cycle-set","slot_index":0,"item_id":"cycle-item","status":"needs_review",
+			 "item":{"stem":"사이클 문제","choices":[{"no":1,"text":"정답"},{"no":2,"text":"오답"}],
+			 "answer":{"correct_no":1},"rationale":"사이클 근거"}}}
 			"""));
 
 		try (KafkaConsumer<String, String> consumer = resultConsumer()) {
@@ -124,7 +129,7 @@ class ProblemGenerationWorkerCycleIntegrationTest {
 			assertThat(result.key()).isEqualTo(TENANT);
 			assertThat(result.value())
 				.contains("worker_job.succeeded", "cycle-job", "cycle-post-execution",
-					"cycle-set", "cycle-item", "사이클 문제")
+					"cycle-set", "cycle-item", "사이클 문제","generation_exhausted","\"item\": null")
 				.doesNotContain("unstable-get-execution", "another-unstable-get-execution");
 			assertThat(jdbc.queryForObject(
 				"SELECT status FROM problem_generation_request_inbox", String.class))
@@ -167,8 +172,8 @@ class ProblemGenerationWorkerCycleIntegrationTest {
 			 "correlation_id":"01980000-0000-7000-8000-000000000022","payload":{
 			 "problem_request_id":"01980000-0000-7000-8000-000000000022",
 			 "problem_execution_id":"01980000-0000-7000-8000-000000000023","target_index":0,
-			 "idempotency_key":"cycle-child-0","request":{"target_kind":"student","target_ref":"st_cycle",
-			 "target_source":"teacher_manual","taxonomy_version":"v1","area_tag":"language",
+			 "idempotency_key":"cycle-child-0","request":{"target_kind":"student","target_ref":"st_0123456789abcdef0123456789abcdef",
+			 "target_source":"teacher_manual","manual_targets":["language.node.infer"],"taxonomy_version":"v1","area_tag":"language",
 			 "type_tags":["concept"],"item_format":"mcq","count":1}}}
 			""".formatted(TENANT);
 	}

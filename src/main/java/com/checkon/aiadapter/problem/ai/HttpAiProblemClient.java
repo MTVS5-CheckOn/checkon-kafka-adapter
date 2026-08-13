@@ -1,6 +1,7 @@
 package com.checkon.aiadapter.problem.ai;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
@@ -31,15 +32,27 @@ public class HttpAiProblemClient implements AiProblemClient {
 	}
 
 	@Override
-	public JsonNode job(String jobId, Headers headers) {
-		return exchange(() -> restClient.get().uri(path + "/{jobId}", jobId)
+	public JobResponse job(String jobId, Headers headers) {
+		try {
+			var response=restClient.get().uri(path + "/{jobId}", jobId)
+				.headers(http -> headers(http, headers, false)).retrieve().toEntity(JsonNode.class);
+			JsonNode body=validate(response.getBody());
+			return new JobResponse(body,retryAfter(response.getHeaders().getFirst("Retry-After")));
+		}
+		catch (RestClientResponseException exception) { throw translated(exception); }
+		catch (RestClientException exception) { throw new AiProblemClientException("AI_NETWORK_ERROR",true,exception); }
+	}
+
+	@Override
+	public JsonNode items(String setId, Headers headers) {
+		return exchange(() -> restClient.get().uri(path + "/{setId}/items", setId)
 			.headers(http -> headers(http, headers, false)).retrieve().body(JsonNode.class));
 	}
 
 	@Override
-	public JsonNode items(String jobId, Headers headers) {
-		return exchange(() -> restClient.get().uri(path + "/{jobId}/items", jobId)
-			.headers(http -> headers(http, headers, false)).retrieve().body(JsonNode.class));
+	public JsonNode item(String setId,int slotIndex,Headers headers) {
+		return exchange(() -> restClient.get().uri(path+"/{setId}/items/{slotIndex}",setId,slotIndex)
+			.headers(http->headers(http,headers,false)).retrieve().body(JsonNode.class));
 	}
 
 	private static void headers(org.springframework.http.HttpHeaders http, Headers value, boolean idempotent) {
@@ -51,14 +64,11 @@ public class HttpAiProblemClient implements AiProblemClient {
 	private JsonNode exchange(java.util.concurrent.Callable<JsonNode> call) {
 		try {
 			JsonNode response = call.call();
-			if (response == null || !response.isObject()) throw new AiProblemClientException("AI_EMPTY_RESPONSE", true, null);
-			return response;
+			return validate(response);
 		}
 		catch (AiProblemClientException exception) { throw exception; }
 		catch (RestClientResponseException exception) {
-			int status = exception.getStatusCode().value();
-			throw new AiProblemClientException(errorCode(status, exception.getResponseBodyAsString()),
-				status == 408 || status == 429 || status >= 500, exception);
+			throw translated(exception);
 		}
 		catch (RestClientException exception) {
 			throw new AiProblemClientException("AI_NETWORK_ERROR", true, exception);
@@ -67,6 +77,12 @@ public class HttpAiProblemClient implements AiProblemClient {
 			throw new AiProblemClientException("AI_CLIENT_ERROR", false, exception);
 		}
 	}
+	private static JsonNode validate(JsonNode response) { if(response==null||!response.isObject()) throw new AiProblemClientException("AI_EMPTY_RESPONSE",true,null); return response; }
+	private AiProblemClientException translated(RestClientResponseException exception) { int status=exception.getStatusCode().value();
+		return new AiProblemClientException(errorCode(status,exception.getResponseBodyAsString()),status==408||status==429||status>=500,exception); }
+	private static Duration retryAfter(String value) { if(value==null||value.isBlank()) return null;
+		try { long seconds=Long.parseLong(value.trim()); return seconds>0?Duration.ofSeconds(seconds):null; }
+		catch(NumberFormatException ignored){ return null; } }
 
 	private String errorCode(int status, String responseBody) {
 		if (status == 409) return "IDEMPOTENCY_CONFLICT";

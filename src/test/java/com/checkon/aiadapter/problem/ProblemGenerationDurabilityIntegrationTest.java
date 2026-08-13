@@ -2,6 +2,7 @@ package com.checkon.aiadapter.problem;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -105,13 +106,17 @@ class ProblemGenerationDurabilityIntegrationTest {
 			"SELECT ai_execution_id FROM problem_generation_request_inbox WHERE event_id=?",
 			String.class, EVENT)).isEqualTo("ai-exec-48");
 		jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '1 second'");
-		when(client.job(any(), any())).thenReturn(objectMapper.readTree("""
-			{"data":{"job_id":"job-48","status":"succeeded"},"error":null,"meta":{"execution_id":"wrong-job-exec"}}
-			"""));
+		when(client.job(any(), any())).thenReturn(new AiProblemClient.JobResponse(objectMapper.readTree("""
+			{"data":{"job_id":"job-48","status":"succeeded","result":{"set_id":"set-48"}},"error":null,"meta":{"execution_id":"wrong-job-exec"}}
+			"""),null));
 		when(client.items(any(), any())).thenReturn(objectMapper.readTree("""
-			{"data":{"job_id":"job-48","execution_id":"wrong-items-exec","set_id":"set-48","items":[
-			 {"item_id":"item-48","status":"needs_review","item":{"stem":"문제 본문","choices":[{"no":1,"text":"정답"},{"no":2,"text":"오답"}],"answer":{"correct_no":1},"rationale":"근거"}}
+			{"data":{"set_id":"set-48","status_counts":{"needs_review":1},"items":[
+			 {"slot_index":0,"item_id":"item-48","status":"needs_review","current_revision_no":0}
 			]},"error":null,"meta":{"execution_id":"wrong-items-meta-exec","versions":{"contract":"0.1"}}}
+			"""));
+		when(client.item(any(), anyInt(), any())).thenReturn(objectMapper.readTree("""
+			{"data":{"set_id":"set-48","slot_index":0,"item_id":"item-48","status":"needs_review",
+			 "item":{"stem":"문제 본문","choices":[{"no":1,"text":"정답"},{"no":2,"text":"오답"}],"answer":{"correct_no":1},"rationale":"근거"}}}
 			"""));
 		assertThat(worker.processOne()).isTrue();
 
@@ -126,7 +131,7 @@ class ProblemGenerationDurabilityIntegrationTest {
 			.doesNotContain("wrong-job-exec", "wrong-items-exec", "wrong-items-meta-exec")
 			.contains("\"set_id\": \"set-48\"")
 			.contains("\"stem\": \"문제 본문\"")
-			.contains("\"correct_answer\": 1");
+			.contains("\"correct_no\": 1");
 	}
 
 	@Test
@@ -156,6 +161,62 @@ class ProblemGenerationDurabilityIntegrationTest {
 			.contains("\"execution_id\": \"canonical-exec\"")
 			.contains("\"error_code\": \"result_unavailable_after_restart\"");
 		verify(client, times(1)).submit(any(), any());
+	}
+
+	@Test
+	@DisplayName("Given Adapter 접수 후 21분이 지났을 때 When worker가 claim하면 Then AI를 호출하지 않고 timed_out으로 종결한다")
+	void failsClosedAtAdapterTimeLimit() throws Exception {
+		// Given
+		var event=decoder.decode(TENANT,requestEvent());
+		store.register(event,UUID.randomUUID(),requestEvent(),Instant.now().minus(Duration.ofMinutes(22)));
+
+		// When
+		assertThat(worker.processOne()).isTrue();
+
+		// Then
+		String payload=jdbc.queryForObject("SELECT event_payload::text FROM problem_generation_outbox",String.class);
+		assertThat(payload).contains("\"child_status\": \"timed_out\"","\"error_code\": \"ADAPTER_TIME_LIMIT_EXCEEDED\"");
+		verify(client,org.mockito.Mockito.never()).submit(any(),any());
+	}
+
+	@Test
+	@DisplayName("Given 정규화 결과가 3 MiB를 넘을 때 When 성공 결과를 만들면 Then result_ref 없이 RESULT_TOO_LARGE로 실패한다")
+	void rejectsOversizedNormalizedResult() throws Exception {
+		// Given
+		var event=decoder.decode(TENANT,requestEvent()); store.register(event,UUID.randomUUID(),requestEvent(),Instant.now());
+		when(client.submit(any(),any())).thenReturn(objectMapper.readTree("{\"data\":{\"job_id\":\"large-job\"},\"meta\":{\"execution_id\":\"large-exec\"}}"));
+		assertThat(worker.processOne()).isTrue(); jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '1 second'");
+		when(client.job(any(),any())).thenReturn(new AiProblemClient.JobResponse(objectMapper.readTree(
+			"{\"data\":{\"status\":\"succeeded\",\"result\":{\"set_id\":\"large-set\"}}}"),null));
+		when(client.items(any(),any())).thenReturn(objectMapper.readTree("{\"data\":{\"set_id\":\"large-set\",\"items\":[{\"slot_index\":0,\"item_id\":\"large-item\",\"status\":\"verified\",\"current_revision_no\":0}]}}"));
+		String huge="가".repeat(1_100_000);
+		when(client.item(any(),anyInt(),any())).thenReturn(objectMapper.readTree("{\"data\":{\"slot_index\":0,\"item\":{\"stem\":\""+huge+"\",\"choices\":[{\"no\":1,\"text\":\"정답\"},{\"no\":2,\"text\":\"오답\"}],\"answer\":{\"correct_no\":1}}}}"));
+
+		// When
+		assertThat(worker.processOne()).isTrue();
+
+		// Then
+		String payload=jdbc.queryForObject("SELECT event_payload::text FROM problem_generation_outbox",String.class);
+		assertThat(payload).contains("\"error_code\": \"RESULT_TOO_LARGE\"").doesNotContain("large-item",huge.substring(0,100));
+	}
+
+	@Test
+	@DisplayName("Given queued 응답에 Retry-After가 있을 때 When polling하면 Then 상태는 유지하고 다음 poll 시각에 advisory를 반영한다")
+	void honorsRetryAfterAsPollingAdvice() throws Exception {
+		// Given
+		var event=decoder.decode(TENANT,requestEvent()); store.register(event,UUID.randomUUID(),requestEvent(),Instant.now());
+		when(client.submit(any(),any())).thenReturn(objectMapper.readTree("{\"data\":{\"job_id\":\"wait-job\"},\"meta\":{\"execution_id\":\"wait-exec\"}}"));
+		assertThat(worker.processOne()).isTrue(); jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '1 second'");
+		Instant before=Instant.now();
+		when(client.job(any(),any())).thenReturn(new AiProblemClient.JobResponse(objectMapper.readTree("{\"data\":{\"status\":\"queued\"}}"),Duration.ofSeconds(10)));
+
+		// When
+		assertThat(worker.processOne()).isTrue();
+
+		// Then
+		Instant next=jdbc.queryForObject("SELECT next_attempt_at FROM problem_generation_request_inbox",java.sql.Timestamp.class).toInstant();
+		assertThat(inboxStatus()).isEqualTo("WAITING");
+		assertThat(next).isAfterOrEqualTo(before.plusSeconds(9));
 	}
 
 	@Test
@@ -211,7 +272,7 @@ class ProblemGenerationDurabilityIntegrationTest {
 			 "event_id":"%s","event_type":"problem_generation.requested","occurred_at":"2026-08-13T00:00:00Z",
 			 "tenant_id":"%s","schema_version":"pg-child-request-1","correlation_id":"%s",
 			 "payload":{"problem_request_id":"%s","problem_execution_id":"%s","target_index":0,
-			  "idempotency_key":"issue-48-child-0","request":{"target_kind":"student","target_ref":"st_issue48","target_source":"teacher_manual","taxonomy_version":"v1","area_tag":"language","type_tags":["infer"],"item_format":"mcq","count":1}}
+			  "idempotency_key":"issue-48-child-0","request":{"target_kind":"student","target_ref":"st_0123456789abcdef0123456789abcdef","target_source":"teacher_manual","manual_targets":["language.node.infer"],"taxonomy_version":"v1","area_tag":"language","type_tags":["infer"],"item_format":"mcq","count":1}}
 			}
 			""".formatted(EVENT, TENANT, REQUEST, REQUEST, EXECUTION);
 	}
