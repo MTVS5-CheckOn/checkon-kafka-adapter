@@ -25,14 +25,17 @@ public class ProblemGenerationOutcomeFactory {
 	}
 
 	public String succeeded(UUID eventId, ClaimedRequest request, String jobId,
-		JsonNode jobResponse, JsonNode itemsResponse, Instant now) {
+		JsonNode jobResponse, JsonNode itemsResponse,List<JsonNode> detailResponses, Instant now) {
 		JsonNode data = requiredObject(itemsResponse, "data");
 		String setId = requiredText(data, "set_id");
-		List<JsonNode> items = flattenItems(data.get("items"));
-		if (items.isEmpty()) throw new IllegalArgumentException("AI items response contains no projectable item");
+		List<JsonNode> items = mergeSlots(data.get("items"),detailResponses);
+		if (items.isEmpty()) throw new IllegalArgumentException("AI items response contains no slots");
 		Map<String, Object> result = new LinkedHashMap<>();
 		result.put("set_id", setId);
 		result.put("items", items);
+		result.put("status_counts",data.get("status_counts"));
+		result.put("requested_count",items.size());
+		result.put("processed_count",items.size());
 		JsonNode meta = object(itemsResponse, "meta");
 		if (meta == null) meta = object(jobResponse, "meta");
 		Map<String, Object> payload = basePayload(request);
@@ -45,33 +48,27 @@ public class ProblemGenerationOutcomeFactory {
 		return envelope(eventId, "worker_job.succeeded", request, payload, now);
 	}
 
-	public String failed(UUID eventId, ClaimedRequest request, String code, Instant now) {
+	public String failed(UUID eventId, ClaimedRequest request, String code,String childStatus, Instant now) {
 		Map<String, Object> payload = basePayload(request);
 		payload.put("job_id", request.aiJobId());
 		payload.put("execution_id", request.aiExecutionId());
-		payload.put("child_status", "failed");
+		payload.put("child_status", childStatus);
 		payload.put("result_status", "failed");
 		payload.put("error_code", code);
 		payload.put("error", Map.of("code", code, "message", "AI problem generation could not complete"));
 		return envelope(eventId, "worker_job.failed", request, payload, now);
 	}
 
-	private List<JsonNode> flattenItems(JsonNode wrappers) {
+	private List<JsonNode> mergeSlots(JsonNode wrappers,List<JsonNode> details) {
 		if (wrappers == null || !wrappers.isArray()) return List.of();
+		Map<Integer,JsonNode> bySlot=new LinkedHashMap<>();
+		for(JsonNode detail:details) { JsonNode value=requiredObject(detail,"data"); bySlot.put(value.path("slot_index").asInt(),value); }
 		List<JsonNode> flattened = new ArrayList<>();
 		for (JsonNode wrapper : wrappers) {
-			JsonNode raw = wrapper.get("item");
-			if (raw == null || !raw.isObject()) continue;
-			ObjectNode item = ((ObjectNode)raw).deepCopy();
-			String itemId = optionalText(wrapper, "item_id");
-			if (itemId != null) item.put("item_id", itemId);
-			String validation = optionalText(wrapper, "status");
-			if (validation != null) item.put("validation_status", validation);
-			JsonNode answer = item.get("answer");
-			if (answer != null && answer.isObject() && answer.get("correct_no") != null) {
-				item.set("correct_answer", answer.get("correct_no"));
-			}
-			flattened.add(item);
+			ObjectNode slot=((ObjectNode)wrapper).deepCopy(); int index=wrapper.path("slot_index").asInt();
+			JsonNode detail=bySlot.get(index); slot.set("item",detail==null?null:detail.get("item"));
+			if(detail!=null) { slot.set("verification",detail.get("verification")); slot.set("available_actions",detail.get("available_actions")); }
+			flattened.add(slot);
 		}
 		return List.copyOf(flattened);
 	}

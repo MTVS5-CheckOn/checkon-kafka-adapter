@@ -42,6 +42,7 @@ checkon:
       worker-enabled: ${AI_PROBLEM_GENERATION_WORKER_ENABLED:false}
       base-url: ${AI_PROBLEM_GENERATION_BASE_URL:http://localhost:8000}
       problems-path: ${AI_PROBLEM_GENERATION_PATH:/v1/problems}
+      diagnosis-path: ${AI_PROBLEM_DIAGNOSIS_PATH:/v1/diagnosis}
       poll-delay: ${AI_PROBLEM_GENERATION_WORKER_POLL_DELAY:1s}
       poll-interval: ${AI_PROBLEM_GENERATION_AI_POLL_INTERVAL:2s}
       lock-timeout: ${AI_PROBLEM_GENERATION_LOCK_TIMEOUT:30s}
@@ -49,9 +50,8 @@ checkon:
       max-attempts: ${AI_PROBLEM_GENERATION_MAX_ATTEMPTS:5}
       connect-timeout: ${AI_PROBLEM_GENERATION_CONNECT_TIMEOUT:3s}
       read-timeout: ${AI_PROBLEM_GENERATION_READ_TIMEOUT:30s}
-      nodes:
-        language-concept: ${AI_PROBLEM_GENERATION_LANGUAGE_CONCEPT_NODE:language.grammar.phonological_change}
-        language-infer: ${AI_PROBLEM_GENERATION_LANGUAGE_INFER_NODE:language.grammar.phonological_change}
+      max-elapsed: ${AI_PROBLEM_GENERATION_MAX_ELAPSED:21m}
+      max-normalized-result-bytes: ${AI_PROBLEM_GENERATION_MAX_RESULT_BYTES:3145728}
     risk-detection:
       enabled: ${AI_RISK_DETECTION_ENABLED:false}
       base-url: ${AI_BASE_URL:}

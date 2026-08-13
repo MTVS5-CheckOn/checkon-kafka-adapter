@@ -14,6 +14,9 @@ import tools.jackson.databind.ObjectMapper;
 @Component
 public class ProblemGenerationRequestDecoder {
 	private static final Pattern TENANT_ALIAS = Pattern.compile("tn_[0-9a-f]{32}");
+	private static final Pattern STUDENT_ALIAS = Pattern.compile("st_[0-9a-f]{32}");
+	private static final Pattern CLASS_ALIAS = Pattern.compile("cl_[0-9a-f]{32}");
+	private static final Pattern IDEMPOTENCY = Pattern.compile("[A-Za-z0-9._:-]{8,200}");
 	private final ObjectMapper objectMapper;
 
 	public ProblemGenerationRequestDecoder(ObjectMapper objectMapper) {
@@ -35,6 +38,7 @@ public class ProblemGenerationRequestDecoder {
 			}
 			JsonNode payload = object(root, "payload");
 			JsonNode request = object(payload, "request");
+			validateTargetAlias(request);
 			UUID requestId = uuid(payload, "problem_request_id");
 			UUID correlationId = uuid(root, "correlation_id");
 			if (!requestId.equals(correlationId)) {
@@ -42,10 +46,14 @@ public class ProblemGenerationRequestDecoder {
 			}
 			int targetIndex = integer(payload, "target_index");
 			if (targetIndex < 0) throw invalid("target_index must be non-negative");
+			String idempotencyKey = text(payload, "idempotency_key");
+			if (!IDEMPOTENCY.matcher(idempotencyKey).matches()) {
+				throw invalid("idempotency_key must be safe ASCII");
+			}
 			return new ProblemGenerationRequestedEvent(
 				uuid(root, "event_id"), instant(root, "occurred_at"), tenant, requestId,
 				uuid(payload, "problem_execution_id"), targetIndex,
-				text(payload, "idempotency_key"), request.deepCopy());
+				idempotencyKey, request.deepCopy());
 		}
 		catch (InvalidProblemGenerationRequestException exception) {
 			throw exception;
@@ -54,6 +62,15 @@ public class ProblemGenerationRequestDecoder {
 			throw new InvalidProblemGenerationRequestException(
 				"Problem generation request is invalid", exception);
 		}
+	}
+
+	private static void validateTargetAlias(JsonNode request) {
+		String kind = text(request, "target_kind");
+		String ref = text(request, "target_ref");
+		boolean valid = "student".equals(kind)
+			? STUDENT_ALIAS.matcher(ref).matches()
+			: "class".equals(kind) && CLASS_ALIAS.matcher(ref).matches();
+		if (!valid) throw invalid("target_ref must be an opaque alias matching target_kind");
 	}
 
 	private static JsonNode object(JsonNode node, String field) {
