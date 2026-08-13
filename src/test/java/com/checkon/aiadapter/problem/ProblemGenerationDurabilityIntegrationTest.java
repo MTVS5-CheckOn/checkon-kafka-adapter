@@ -2,6 +2,8 @@ package com.checkon.aiadapter.problem;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
@@ -87,8 +89,8 @@ class ProblemGenerationDurabilityIntegrationTest {
 	}
 
 	@Test
-	@DisplayName("Given AI queued 응답 When 재시작 뒤 polling이 성공하면 Then 평탄화한 결과를 Outbox에 저장한다")
-	void resumesPollingAndStoresProjectableOutcome() throws Exception {
+	@DisplayName("Given POST 정본 실행 ID When 이후 GET 값이 달라져도 Then POST 값을 결과에 보존한다")
+	void preservesSubmittedExecutionIdAcrossPolling() throws Exception {
 		// Given
 		var event = decoder.decode(TENANT, requestEvent());
 		store.register(event, UUID.fromString("01980000-0000-7000-8000-000000000004"), requestEvent(), Instant.now());
@@ -96,16 +98,20 @@ class ProblemGenerationDurabilityIntegrationTest {
 			{"data":{"job_id":"job-48","status":"queued"},"error":null,"meta":{"execution_id":"ai-exec-48"}}
 			"""));
 
-		// When: first process submits, then a later process instance can claim the durable POLL phase.
+		// When: submit identifiers are persisted before a later process instance claims POLL.
 		assertThat(worker.processOne()).isTrue();
+		assertThat(inboxStatus()).isEqualTo("WAITING");
+		assertThat(jdbc.queryForObject(
+			"SELECT ai_execution_id FROM problem_generation_request_inbox WHERE event_id=?",
+			String.class, EVENT)).isEqualTo("ai-exec-48");
 		jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '1 second'");
 		when(client.job(any(), any())).thenReturn(objectMapper.readTree("""
-			{"data":{"job_id":"job-48","status":"succeeded"},"error":null,"meta":{"execution_id":"ai-exec-48"}}
+			{"data":{"job_id":"job-48","status":"succeeded"},"error":null,"meta":{"execution_id":"wrong-job-exec"}}
 			"""));
 		when(client.items(any(), any())).thenReturn(objectMapper.readTree("""
-			{"data":{"job_id":"job-48","execution_id":"ai-exec-48","set_id":"set-48","items":[
+			{"data":{"job_id":"job-48","execution_id":"wrong-items-exec","set_id":"set-48","items":[
 			 {"item_id":"item-48","status":"needs_review","item":{"stem":"문제 본문","choices":[{"no":1,"text":"정답"},{"no":2,"text":"오답"}],"answer":{"correct_no":1},"rationale":"근거"}}
-			]},"error":null,"meta":{"execution_id":"ai-exec-48","versions":{"contract":"0.1"}}}
+			]},"error":null,"meta":{"execution_id":"wrong-items-meta-exec","versions":{"contract":"0.1"}}}
 			"""));
 		assertThat(worker.processOne()).isTrue();
 
@@ -116,9 +122,40 @@ class ProblemGenerationDurabilityIntegrationTest {
 		assertThat(payload)
 			.contains("\"problem_execution_id\": \"" + EXECUTION + "\"")
 			.contains("\"job_id\": \"job-48\"")
+			.contains("\"execution_id\": \"ai-exec-48\"")
+			.doesNotContain("wrong-job-exec", "wrong-items-exec", "wrong-items-meta-exec")
 			.contains("\"set_id\": \"set-48\"")
 			.contains("\"stem\": \"문제 본문\"")
 			.contains("\"correct_answer\": 1");
+	}
+
+	@Test
+	@DisplayName("Given AI 재시작으로 기존 결과가 유실됨 When polling하면 Then 재제출 없이 명시 사유로 실패한다")
+	void failsWithoutResubmittingWhenResultWasLostAfterAiRestart() throws Exception {
+		// Given
+		var event = decoder.decode(TENANT, requestEvent());
+		store.register(event, UUID.randomUUID(), requestEvent(), Instant.now());
+		when(client.submit(any(), any())).thenReturn(objectMapper.readTree("""
+			{"data":{"job_id":"lost-job","status":"queued"},"error":null,
+			 "meta":{"execution_id":"canonical-exec"}}
+			"""));
+		assertThat(worker.processOne()).isTrue();
+		jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '1 second'");
+		when(client.job(any(), any())).thenThrow(new AiProblemClientException(
+			"result_unavailable_after_restart", false, null));
+
+		// When
+		assertThat(worker.processOne()).isTrue();
+
+		// Then
+		String payload = jdbc.queryForObject(
+			"SELECT event_payload::text FROM problem_generation_outbox", String.class);
+		assertThat(payload)
+			.contains("\"event_type\": \"worker_job.failed\"")
+			.contains("\"job_id\": \"lost-job\"")
+			.contains("\"execution_id\": \"canonical-exec\"")
+			.contains("\"error_code\": \"result_unavailable_after_restart\"");
+		verify(client, times(1)).submit(any(), any());
 	}
 
 	@Test

@@ -18,6 +18,8 @@ Adapter Outbox -> completed/failed topic -> CheckOn Backend
 - PostgreSQL Outbox와 브로커 확인 응답 기반 completed/failed 발행
 - 요청 DLT, stale lock 복구, 동일 결과 이벤트 ID 재발행
 - Testcontainers Kafka/PostgreSQL 수직 통합 검증
+- 문제 출제 child Kafka 요청, AI 제출·polling·items 조회, 결과 Outbox 발행
+- AI POST `execution_id` 정본 영속화와 GET 식별자 변동 차단
 
 ## 기술 기준
 
@@ -49,6 +51,16 @@ Kafka 소비와 AI worker를 실제로 활성화하려면 다음 세 값을 모�
 RISK_DETECTION_KAFKA_ENABLED=true
 AI_RISK_DETECTION_ENABLED=true
 AI_RISK_DETECTION_WORKER_ENABLED=true
+```
+
+문제 출제 한 사이클은 아래 두 값을 함께 활성화합니다. AI팀의 최종 노드 카탈로그가
+현재 기본값과 다르면 두 node 환경변수도 함께 교체합니다.
+
+```text
+PROBLEM_GENERATION_KAFKA_ENABLED=true
+AI_PROBLEM_GENERATION_WORKER_ENABLED=true
+AI_PROBLEM_GENERATION_LANGUAGE_CONCEPT_NODE=language.grammar.phonological_change
+AI_PROBLEM_GENERATION_LANGUAGE_INFER_NODE=language.grammar.phonological_change
 ```
 
 CheckOn Backend의 `RISK_DETECTION_HTTP_ADAPTER_ENABLED`는 반드시 `false`로 둡니다. 독립 Adapter와 Backend 내장 fallback을 동시에 켜면 같은 requested 이벤트가 두 번 처리됩니다.

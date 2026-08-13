@@ -37,7 +37,7 @@ public class ProblemGenerationOutcomeFactory {
 		if (meta == null) meta = object(jobResponse, "meta");
 		Map<String, Object> payload = basePayload(request);
 		payload.put("job_id", jobId);
-		payload.put("execution_id", meta == null ? null : optionalText(meta, "execution_id"));
+		payload.put("execution_id", request.aiExecutionId());
 		payload.put("set_id", setId);
 		payload.put("result_status", "completed");
 		payload.put("result", result);
@@ -48,6 +48,7 @@ public class ProblemGenerationOutcomeFactory {
 	public String failed(UUID eventId, ClaimedRequest request, String code, Instant now) {
 		Map<String, Object> payload = basePayload(request);
 		payload.put("job_id", request.aiJobId());
+		payload.put("execution_id", request.aiExecutionId());
 		payload.put("child_status", "failed");
 		payload.put("result_status", "failed");
 		payload.put("error_code", code);

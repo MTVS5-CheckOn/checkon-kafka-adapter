@@ -38,12 +38,23 @@ The problem-generation path consumes one `pg-child-request-1` event per studio t
 Enable both `PROBLEM_GENERATION_KAFKA_ENABLED` and
 `AI_PROBLEM_GENERATION_WORKER_ENABLED` only when Kafka, the adapter database, and the
 AI `/v1/problems` API are reachable. The adapter persists the raw event, stable
-`adapter_execution_id`, AI `job_id`, and current `SUBMIT`/`POLL` phase. A stale lock
-is reclaimed after `AI_PROBLEM_GENERATION_LOCK_TIMEOUT`, so a process restart resumes
-the same idempotent request instead of creating another child execution.
+`adapter_execution_id`, the `job_id` and canonical `execution_id` returned by POST,
+and the current `SUBMIT`/`POLL` phase. A stale lock is reclaimed after
+`AI_PROBLEM_GENERATION_LOCK_TIMEOUT`.
+
+Adapter restart recovery and AI restart recovery are different guarantees. Once POST
+identifiers are stored, an Adapter restart resumes polling the same `job_id`; it does
+not make the AI process resume an in-memory queued job. If AI reports
+`detail.reason=result_unavailable_after_restart`, the Adapter publishes a terminal
+failed result with that reason and never submits the POLL-phase request again.
 
 Terminal AI items are flattened into a `worker_job.succeeded` result event and written
 to `problem_generation_outbox` in the same transaction that closes the inbox work.
 Kafka publication is retried from that outbox. Contract-invalid Kafka requests go to
 the request topic's `.dlt`; exhausted AI calls produce a durable `worker_job.failed`
 result so the backend can aggregate `PARTIAL_SUCCESS` across child targets.
+
+The v1 generation boundary accepts only `language + CONCEPT` and
+`language + INFER`. Both node IDs are environment-configurable. Other cells are
+stopped before HTTP with `NO_EVIDENCE_READY_TARGET`. `rejected_insufficient` remains
+a forward-compatible parser value but is not expected from the wired v1 AI path.

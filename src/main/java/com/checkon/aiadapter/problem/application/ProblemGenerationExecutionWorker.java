@@ -50,10 +50,17 @@ public class ProblemGenerationExecutionWorker {
 	private boolean execute(ClaimedRequest request) {
 		Headers headers = new Headers(request.tenantAlias(), request.requestId(), request.idempotencyKey());
 		try {
-			JsonNode job = "POLL".equals(request.phase())
-				? client.job(request.aiJobId(), headers)
-				: client.submit(requestMapper.map(request.requestBody()), headers);
-			String jobId = "POLL".equals(request.phase()) ? request.aiJobId() : text(job.path("data"), "job_id");
+			if ("SUBMIT".equals(request.phase())) {
+				JsonNode submitted = client.submit(requestMapper.map(request.requestBody()), headers);
+				String jobId = text(submitted.path("data"), "job_id");
+				String executionId = executionId(submitted);
+				Instant now = Instant.now(clock);
+				store.markSubmitted(request.eventId(), jobId, executionId,
+					now.plus(properties.pollInterval()), now);
+				return true;
+			}
+			JsonNode job = client.job(request.aiJobId(), headers);
+			String jobId = request.aiJobId();
 			String status = text(job.path("data"), "status").toLowerCase(Locale.ROOT);
 			if (status.equals("succeeded")) {
 				JsonNode items = client.items(jobId, headers);
@@ -64,11 +71,14 @@ public class ProblemGenerationExecutionWorker {
 			}
 			else {
 				Instant now = Instant.now(clock);
-				store.markWaiting(request.eventId(), jobId, now.plus(properties.pollInterval()), now);
+				store.markWaiting(request.eventId(), now.plus(properties.pollInterval()), now);
 			}
 		}
 		catch (AiProblemClientException exception) {
 			handleFailure(request, exception.code(), exception.isTransientFailure());
+		}
+		catch (ProblemGenerationMappingException exception) {
+			saveFailure(request, exception.code());
 		}
 		catch (RuntimeException exception) {
 			handleFailure(request, "AI_RESPONSE_INVALID", false);
@@ -104,5 +114,14 @@ public class ProblemGenerationExecutionWorker {
 			throw new IllegalArgumentException(field + " must not be blank");
 		}
 		return value.asText();
+	}
+
+	private static String executionId(JsonNode submitted) {
+		JsonNode data = submitted.path("data");
+		JsonNode dataValue = data.get("execution_id");
+		if (dataValue != null && dataValue.isTextual() && !dataValue.asText().isBlank()) {
+			return dataValue.asText();
+		}
+		return text(submitted.path("meta"), "execution_id");
 	}
 }

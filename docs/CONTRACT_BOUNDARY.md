@@ -29,9 +29,15 @@ Adapter는 CheckOn 백엔드 DB를 조회하지 않습니다. AI 입력의 선�
 # Problem Studio to AI mapping
 
 The frontend studio selects an area/type cell while the AI contract requires an
-explicit curriculum node and, for four areas, a source-procurement object. The
-adapter owns this replaceable translation. It maps each of the five v1 areas to a
-valid curriculum node and supplies deterministic source defaults for reading,
-literature, speech/writing, and media. Backend IDs remain opaque aliases; the mapping
-does not add student data. Product-specific source choices can replace these defaults
-without changing the Backend Kafka contract.
+explicit curriculum node. The v1 Backend admits only `language + CONCEPT` and
+`language + INFER`; the Adapter maps those cells to separately configurable node IDs.
+The current replaceable defaults both point to
+`language.grammar.phonological_change`, which is present in the inspected AI graph and
+has both type affinities. Reading, literature, speech/writing, media, and other type
+tags are rejected before AI HTTP because their evidence/source contracts are not
+ready. Backend IDs remain opaque aliases and the mapping does not add student data.
+
+`POST /v1/problems` owns the canonical AI `execution_id`. The Adapter stores it with
+the returned `job_id` before polling and ignores changing `execution_id` values from
+both GET endpoints. This temporary compatibility rule can be removed only after the
+AI team confirms stable identifiers through one job lifecycle.
