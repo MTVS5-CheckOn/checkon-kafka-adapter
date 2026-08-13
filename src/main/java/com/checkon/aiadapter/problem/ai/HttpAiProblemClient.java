@@ -8,14 +8,17 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 public class HttpAiProblemClient implements AiProblemClient {
 	private final RestClient restClient;
 	private final String path;
+	private final ObjectMapper objectMapper;
 
-	public HttpAiProblemClient(RestClient restClient, String path) {
+	public HttpAiProblemClient(RestClient restClient, String path, ObjectMapper objectMapper) {
 		this.restClient = restClient;
 		this.path = path;
+		this.objectMapper = objectMapper;
 	}
 
 	@Override
@@ -45,7 +48,7 @@ public class HttpAiProblemClient implements AiProblemClient {
 		if (idempotent) http.set("Idempotency-Key", value.idempotencyKey());
 	}
 
-	private static JsonNode exchange(java.util.concurrent.Callable<JsonNode> call) {
+	private JsonNode exchange(java.util.concurrent.Callable<JsonNode> call) {
 		try {
 			JsonNode response = call.call();
 			if (response == null || !response.isObject()) throw new AiProblemClientException("AI_EMPTY_RESPONSE", true, null);
@@ -54,7 +57,7 @@ public class HttpAiProblemClient implements AiProblemClient {
 		catch (AiProblemClientException exception) { throw exception; }
 		catch (RestClientResponseException exception) {
 			int status = exception.getStatusCode().value();
-			throw new AiProblemClientException(status == 409 ? "IDEMPOTENCY_CONFLICT" : "AI_HTTP_" + status,
+			throw new AiProblemClientException(errorCode(status, exception.getResponseBodyAsString()),
 				status == 408 || status == 429 || status >= 500, exception);
 		}
 		catch (RestClientException exception) {
@@ -63,5 +66,22 @@ public class HttpAiProblemClient implements AiProblemClient {
 		catch (Exception exception) {
 			throw new AiProblemClientException("AI_CLIENT_ERROR", false, exception);
 		}
+	}
+
+	private String errorCode(int status, String responseBody) {
+		if (status == 409) return "IDEMPOTENCY_CONFLICT";
+		if (status == 404) {
+			try {
+				JsonNode reason = objectMapper.readTree(responseBody).path("error").path("detail").get("reason");
+				if (reason != null && reason.isTextual()
+					&& "result_unavailable_after_restart".equals(reason.asText())) {
+					return reason.asText();
+				}
+			}
+			catch (RuntimeException ignored) {
+				// Fall through to the stable HTTP status code for malformed or non-JSON error bodies.
+			}
+		}
+		return "AI_HTTP_" + status;
 	}
 }

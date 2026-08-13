@@ -48,6 +48,9 @@ checkon:
       max-attempts: ${AI_PROBLEM_GENERATION_MAX_ATTEMPTS:5}
       connect-timeout: ${AI_PROBLEM_GENERATION_CONNECT_TIMEOUT:3s}
       read-timeout: ${AI_PROBLEM_GENERATION_READ_TIMEOUT:30s}
+      nodes:
+        language-concept: ${AI_PROBLEM_GENERATION_LANGUAGE_CONCEPT_NODE:language.grammar.phonological_change}
+        language-infer: ${AI_PROBLEM_GENERATION_LANGUAGE_INFER_NODE:language.grammar.phonological_change}
     risk-detection:
       enabled: ${AI_RISK_DETECTION_ENABLED:false}
       base-url: ${AI_BASE_URL:}

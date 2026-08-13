@@ -60,20 +60,31 @@ public class ProblemGenerationStore {
 			RETURNING inbox.event_id,inbox.adapter_execution_id,inbox.tenant_alias,
 			 inbox.problem_request_id,inbox.problem_execution_id,inbox.target_index,
 			 inbox.request_id,inbox.idempotency_key,inbox.event_payload::text,
-			 inbox.phase,inbox.ai_job_id,inbox.http_attempts
+			 inbox.phase,inbox.ai_job_id,inbox.ai_execution_id,inbox.http_attempts
 			""", (rs, row) -> claimed(rs.getObject(1, UUID.class), rs.getObject(2, UUID.class),
 			rs.getString(3), rs.getObject(4, UUID.class), rs.getObject(5, UUID.class), rs.getInt(6),
-			rs.getString(7), rs.getString(8), rs.getString(9), rs.getString(10), rs.getString(11), rs.getInt(12)),
+			rs.getString(7), rs.getString(8), rs.getString(9), rs.getString(10), rs.getString(11),
+			rs.getString(12), rs.getInt(13)),
 			Timestamp.from(now), Timestamp.from(now.minus(lockTimeout)), Timestamp.from(now), Timestamp.from(now));
 		return claimed.stream().findFirst();
 	}
 
-	public void markWaiting(UUID eventId, String jobId, Instant nextAttemptAt, Instant now) {
+	public void markSubmitted(UUID eventId, String jobId, String executionId,
+		Instant nextAttemptAt, Instant now) {
 		requireOne(jdbc.update("""
 			UPDATE problem_generation_request_inbox
-			SET status='WAITING',phase='POLL',ai_job_id=?,next_attempt_at=?,locked_at=NULL,last_error_code=NULL,updated_at=?
+			SET status='WAITING',phase='POLL',ai_job_id=?,ai_execution_id=?,next_attempt_at=?,
+			    locked_at=NULL,last_error_code=NULL,updated_at=?
 			WHERE event_id=? AND status='PROCESSING'
-			""", jobId, Timestamp.from(nextAttemptAt), Timestamp.from(now), eventId), eventId);
+			""", jobId, executionId, Timestamp.from(nextAttemptAt), Timestamp.from(now), eventId), eventId);
+	}
+
+	public void markWaiting(UUID eventId, Instant nextAttemptAt, Instant now) {
+		requireOne(jdbc.update("""
+			UPDATE problem_generation_request_inbox
+			SET status='WAITING',next_attempt_at=?,locked_at=NULL,last_error_code=NULL,updated_at=?
+			WHERE event_id=? AND status='PROCESSING' AND phase='POLL'
+			""", Timestamp.from(nextAttemptAt), Timestamp.from(now), eventId), eventId);
 	}
 
 	public void markRetry(UUID eventId, Instant nextAttemptAt, String errorCode, Instant now) {
@@ -140,11 +151,12 @@ public class ProblemGenerationStore {
 
 	private ClaimedRequest claimed(UUID eventId, UUID adapterExecutionId, String tenantAlias,
 		UUID requestId, UUID executionId, int targetIndex, String requestHeader, String idem,
-		String rawPayload, String phase, String jobId, int attempts) {
+		String rawPayload, String phase, String jobId, String aiExecutionId, int attempts) {
 		try {
 			JsonNode request = objectMapper.readTree(rawPayload).get("payload").get("request");
 			return new ClaimedRequest(eventId, adapterExecutionId, tenantAlias, requestId, executionId,
-				targetIndex, requestHeader, idem, objectMapper.writeValueAsString(request), phase, jobId, attempts);
+				targetIndex, requestHeader, idem, objectMapper.writeValueAsString(request), phase, jobId,
+				aiExecutionId, attempts);
 		}
 		catch (JacksonException exception) {
 			throw new IllegalStateException("Stored problem generation event is invalid", exception);
@@ -163,7 +175,8 @@ public class ProblemGenerationStore {
 	public enum Registration { NEW, DUPLICATE, CONFLICT }
 	public record ClaimedRequest(UUID eventId, UUID adapterExecutionId, String tenantAlias,
 		UUID problemRequestId, UUID problemExecutionId, int targetIndex, String requestId,
-		String idempotencyKey, String requestBody, String phase, String aiJobId, int httpAttempt) { }
+		String idempotencyKey, String requestBody, String phase, String aiJobId,
+		String aiExecutionId, int httpAttempt) { }
 	public record ClaimedOutbox(UUID eventId, UUID sourceEventId, String topic,
 		String messageKey, String eventPayload, int publishAttempt) { }
 }
