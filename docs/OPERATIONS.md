@@ -32,3 +32,18 @@ HTTP client 내부 자동 재시도는 사용하지 않습니다. Kafka 요청 �
 - 원본 강사·학생 UUID나 개인정보를 Adapter에서 새로 추가하지 않습니다.
 - 장애 추적에는 opaque alias와 `event_id`, `request_id`, `correlation_id`, `causation_id`만 사용합니다.
 - 실제 DB 비밀번호, AI 인증정보와 토큰은 환경변수 또는 비밀 저장소로 주입합니다.
+# Problem Generation worker
+
+The problem-generation path consumes one `pg-child-request-1` event per studio target.
+Enable both `PROBLEM_GENERATION_KAFKA_ENABLED` and
+`AI_PROBLEM_GENERATION_WORKER_ENABLED` only when Kafka, the adapter database, and the
+AI `/v1/problems` API are reachable. The adapter persists the raw event, stable
+`adapter_execution_id`, AI `job_id`, and current `SUBMIT`/`POLL` phase. A stale lock
+is reclaimed after `AI_PROBLEM_GENERATION_LOCK_TIMEOUT`, so a process restart resumes
+the same idempotent request instead of creating another child execution.
+
+Terminal AI items are flattened into a `worker_job.succeeded` result event and written
+to `problem_generation_outbox` in the same transaction that closes the inbox work.
+Kafka publication is retried from that outbox. Contract-invalid Kafka requests go to
+the request topic's `.dlt`; exhausted AI calls produce a durable `worker_job.failed`
+result so the backend can aggregate `PARTIAL_SUCCESS` across child targets.
