@@ -98,20 +98,10 @@ class RiskDetectionRequestContractTest {
 	@DisplayName("Given v0.1 요청 When detection_evidence가 누락되면 Then 빈 배열로 호환한다")
 	void acceptsLegacyRequestWithoutDetectionEvidence() throws Exception {
 		// Given
-		String legacyJson = readFixture().replace(
-			"    \"detection_evidence\": [\n"
-				+ "      {\n"
-				+ "        \"kind\": \"assignment_window\",\n"
-				+ "        \"source_table\": \"assignment_week_summary\",\n"
-				+ "        \"record_id\": \"assignment-week-1\",\n"
-				+ "        \"student_ref\": \"st_abcdef0123456789abcdef0123456789\",\n"
-				+ "        \"week_start\": \"2026-08-10\",\n"
-				+ "        \"expected_count\": 2,\n"
-				+ "        \"submitted_count\": 1\n"
-				+ "      }\n"
-				+ "    ]\n",
-			""
-		).replace("    \"alert_context\": [],\n  }", "    \"alert_context\": []\n  }");
+		var legacyRoot = (tools.jackson.databind.node.ObjectNode)objectMapper.readTree(readFixture());
+		var legacyPayload = (tools.jackson.databind.node.ObjectNode)legacyRoot.get("payload");
+		legacyPayload.remove("detection_evidence");
+		String legacyJson = objectMapper.writeValueAsString(legacyRoot);
 		RiskDetectionRequestedEvent legacyEvent = objectMapper.readValue(
 			legacyJson, RiskDetectionRequestedEvent.class);
 

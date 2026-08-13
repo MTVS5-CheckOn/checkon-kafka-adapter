@@ -37,6 +37,17 @@ server:
 
 checkon:
   ai:
+    problem-generation:
+      worker-enabled: ${AI_PROBLEM_GENERATION_WORKER_ENABLED:false}
+      base-url: ${AI_PROBLEM_GENERATION_BASE_URL:http://localhost:8000}
+      problems-path: ${AI_PROBLEM_GENERATION_PATH:/v1/problems}
+      poll-delay: ${AI_PROBLEM_GENERATION_WORKER_POLL_DELAY:1s}
+      poll-interval: ${AI_PROBLEM_GENERATION_AI_POLL_INTERVAL:2s}
+      lock-timeout: ${AI_PROBLEM_GENERATION_LOCK_TIMEOUT:30s}
+      retry-initial-delay: ${AI_PROBLEM_GENERATION_RETRY_INITIAL_DELAY:1s}
+      max-attempts: ${AI_PROBLEM_GENERATION_MAX_ATTEMPTS:5}
+      connect-timeout: ${AI_PROBLEM_GENERATION_CONNECT_TIMEOUT:3s}
+      read-timeout: ${AI_PROBLEM_GENERATION_READ_TIMEOUT:30s}
     risk-detection:
       enabled: ${AI_RISK_DETECTION_ENABLED:false}
       base-url: ${AI_BASE_URL:}
@@ -49,6 +60,16 @@ checkon:
       retry-initial-delay: ${AI_RISK_DETECTION_RETRY_INITIAL_DELAY:1s}
       max-attempts: ${AI_RISK_DETECTION_MAX_ATTEMPTS:3}
   kafka:
+    problem-generation:
+      enabled: ${PROBLEM_GENERATION_KAFKA_ENABLED:false}
+      request-topic: ${PROBLEM_GENERATION_REQUEST_TOPIC:checkon.ai.problem-generation.requests.v1}
+      result-topic: ${PROBLEM_GENERATION_RESULT_TOPIC:checkon.ai.problem-generation.results.v1}
+      consumer-group-id: ${PROBLEM_GENERATION_CONSUMER_GROUP:checkon-ai-adapter-problem-generation-v1}
+      outbox-poll-delay: ${PROBLEM_GENERATION_OUTBOX_POLL_DELAY:1s}
+      outbox-lock-timeout: ${PROBLEM_GENERATION_OUTBOX_LOCK_TIMEOUT:30s}
+      outbox-retry-delay: ${PROBLEM_GENERATION_OUTBOX_RETRY_DELAY:5s}
+      producer-send-timeout: ${PROBLEM_GENERATION_PRODUCER_SEND_TIMEOUT:10s}
+      outbox-max-attempts: ${PROBLEM_GENERATION_OUTBOX_MAX_ATTEMPTS:8}
     risk-detection:
       enabled: ${RISK_DETECTION_KAFKA_ENABLED:false}
       requested-topic: ${RISK_DETECTION_REQUESTED_TOPIC:checkon.risk-detection.requested.v1}
