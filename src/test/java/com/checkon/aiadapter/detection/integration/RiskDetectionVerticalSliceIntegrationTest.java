@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -141,6 +142,11 @@ class RiskDetectionVerticalSliceIntegrationTest {
 		assertThat(outcome.get("correlation_id").asText())
 			.isEqualTo(requestEvent.runId().toString());
 		assertThat(outcome.get("request_id").asText()).isEqualTo(requestEvent.requestId());
+		assertThat(outcome.at("/payload/data/stats/r1_threshold_pp").decimalValue())
+			.isEqualByComparingTo("12.50");
+		assertThat(outcome.at("/payload/data/stats/r1_threshold_source").asText())
+			.isEqualTo("pooled");
+		assertThat(outcome.at("/payload/data/stats/r1_pool_n").asInt()).isEqualTo(42);
 		assertThat(inboxStatus()).isEqualTo("OUTCOME_PUBLISHED");
 		assertThat(outboxStatus()).isEqualTo("PUBLISHED");
 		ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
@@ -189,7 +195,9 @@ class RiskDetectionVerticalSliceIntegrationTest {
 		return new AiDetectionResponse(
 			new AiDetectionResponse.Data(
 				List.of(),
-				new AiDetectionResponse.Stats(1, 0, 0, 0, List.of())
+				new AiDetectionResponse.Stats(
+					1, 0, 0, 0, List.of(), new BigDecimal("12.50"), "pooled", 42
+				)
 			),
 			null,
 			new AiDetectionResponse.Meta("ai-execution-1", Map.of("contract", "0.2"))

@@ -83,7 +83,35 @@ class HttpAiRiskDetectionClientTest {
 		// Then
 		assertThat(response.error()).isNull();
 		assertThat(response.data().signals()).isEmpty();
+		assertThat(response.data().stats().r1ThresholdPp()).isEqualByComparingTo("12.50");
+		assertThat(response.data().stats().r1ThresholdSource()).isEqualTo("pooled");
+		assertThat(response.data().stats().r1PoolN()).isEqualTo(42);
 		assertThat(response.meta().executionId()).isEqualTo("ai-execution-1");
+		server.verify();
+	}
+
+	@Test
+	@DisplayName("Given 진단 확장 필드가 없는 기존 AI 응답 When 역직렬화하면 Then nullable stats로 호환한다")
+	void readsLegacyStatsWithoutR1Diagnostics() {
+		// Given
+		server.expect(once(), requestTo("http://ai.example.test/v1/detect"))
+			.andRespond(withSuccess("""
+				{
+				  "data":{"signals":[],"stats":{"students_evaluated":1,
+				    "signals_raised":0,"excluded_under_2w":0,"capped_out":0,
+				    "rules_skipped":[]}},
+				  "error":null,
+				  "meta":{"execution_id":"legacy-execution","versions":{"contract":"0.2"}}
+				}
+				""", APPLICATION_JSON));
+
+		// When
+		AiDetectionResponse response = client.detect(request, headers);
+
+		// Then
+		assertThat(response.data().stats().r1ThresholdPp()).isNull();
+		assertThat(response.data().stats().r1ThresholdSource()).isNull();
+		assertThat(response.data().stats().r1PoolN()).isNull();
 		server.verify();
 	}
 

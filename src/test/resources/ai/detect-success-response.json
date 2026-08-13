@@ -6,6 +6,9 @@
       "signals_raised": 0,
       "excluded_under_2w": 0,
       "capped_out": 0,
+      "r1_threshold_pp": 12.50,
+      "r1_threshold_source": "pooled",
+      "r1_pool_n": 42,
       "rules_skipped": []
     }
   },
