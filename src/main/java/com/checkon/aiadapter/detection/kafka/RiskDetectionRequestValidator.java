@@ -14,7 +14,9 @@ public final class RiskDetectionRequestValidator {
 
 	private static final Pattern TENANT_ALIAS = Pattern.compile("^tn_[0-9a-f]{32}$");
 	private static final Pattern STUDENT_ALIAS = Pattern.compile("^st_[0-9a-f]{32}$");
-	private static final Pattern CLASS_ALIAS = Pattern.compile("^cl_[0-9a-f]{32}$");
+	private static final Pattern CLASS_ALIAS = Pattern.compile(
+		"^cl_(?:[0-9a-f]{32}|unassigned)$"
+	);
 	private static final Pattern SNAPSHOT_HASH = Pattern.compile("^sha256:[0-9a-f]{64}$");
 
 	private RiskDetectionRequestValidator() {
