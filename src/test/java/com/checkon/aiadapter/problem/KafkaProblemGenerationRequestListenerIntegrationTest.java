@@ -109,7 +109,10 @@ class KafkaProblemGenerationRequestListenerIntegrationTest {
 			 "correlation_id":"01980000-0000-7000-8000-000000000002","payload":{
 			  "problem_request_id":"01980000-0000-7000-8000-000000000002",
 			  "problem_execution_id":"01980000-0000-7000-8000-000000000003","target_index":0,
-			  "idempotency_key":"child-0","request":{"target_kind":"student"}}}
+			  "idempotency_key":"child-request-0","request":{"target_kind":"student",
+			  "target_ref":"st_0123456789abcdef0123456789abcdef","target_source":"teacher_manual",
+			  "manual_targets":["language.node.infer"],"taxonomy_version":"v1","area_tag":"language",
+			  "type_tags":["infer"],"item_format":"mcq","count":1}}}
 			""".formatted(TENANT, schema);
 	}
 

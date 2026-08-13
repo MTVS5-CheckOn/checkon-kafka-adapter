@@ -5,25 +5,19 @@ import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 @Component
 public class ProblemGenerationAiRequestMapper {
 	private final ObjectMapper objectMapper;
-	private final ProblemGenerationNodeProperties nodes;
-
-	public ProblemGenerationAiRequestMapper(ObjectMapper objectMapper, ProblemGenerationNodeProperties nodes) {
+	public ProblemGenerationAiRequestMapper(ObjectMapper objectMapper) {
 		this.objectMapper = objectMapper;
-		this.nodes = nodes;
 	}
 
 	public String map(String backendRequest) {
 		try {
 			ObjectNode request = (ObjectNode)objectMapper.readTree(backendRequest);
-			String target = targetFor(request);
-			ArrayNode targets = objectMapper.createArrayNode().add(target);
-			request.set("manual_targets", targets);
+			validate(request);
 			return objectMapper.writeValueAsString(request);
 		}
 		catch (JacksonException exception) {
@@ -31,24 +25,22 @@ public class ProblemGenerationAiRequestMapper {
 		}
 	}
 
-	private String targetFor(ObjectNode request) {
+	private void validate(ObjectNode request) {
 		if (!"teacher_manual".equals(request.path("target_source").asText())) {
 			throw unsupported("v1 supports only teacher_manual target_source");
-		}
-		String area = request.path("area_tag").asText();
-		if (!"language".equals(area)) {
-			throw unsupported("v1 has no evidence-ready node for area_tag=" + area);
 		}
 		JsonNode typeTags = request.get("type_tags");
 		if (typeTags == null || !typeTags.isArray() || typeTags.size() != 1
 			|| !typeTags.get(0).isTextual()) {
 			throw unsupported("v1 requires exactly one type_tag");
 		}
-		return switch (typeTags.get(0).asText().toLowerCase(java.util.Locale.ROOT)) {
-			case "concept" -> nodes.languageConcept();
-			case "infer" -> nodes.languageInfer();
-			default -> throw unsupported("v1 supports only CONCEPT or INFER type_tag");
-		};
+		JsonNode targets=request.get("manual_targets");
+		if(targets==null||!targets.isArray()||targets.isEmpty()) throw unsupported("diagnosis selected no evidence-ready node");
+		java.util.Set<String> unique=new java.util.HashSet<>();
+		for(JsonNode target:targets) {
+			if(!target.isTextual()||!target.asText().matches("[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}")||!unique.add(target.asText()))
+				throw unsupported("manual_targets contains an invalid or duplicate node ID");
+		}
 	}
 
 	private static ProblemGenerationMappingException unsupported(String message) {

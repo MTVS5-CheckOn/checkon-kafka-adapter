@@ -6,50 +6,41 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import com.checkon.aiadapter.problem.application.ProblemGenerationAiRequestMapper;
 import com.checkon.aiadapter.problem.application.ProblemGenerationMappingException;
-import com.checkon.aiadapter.problem.application.ProblemGenerationNodeProperties;
 
 import tools.jackson.databind.ObjectMapper;
 
 class ProblemGenerationAiRequestMapperTest {
 	private final ObjectMapper objectMapper = new ObjectMapper();
-	private final ProblemGenerationAiRequestMapper mapper = new ProblemGenerationAiRequestMapper(
-		objectMapper, new ProblemGenerationNodeProperties("node.concept", "node.infer"));
+	private final ProblemGenerationAiRequestMapper mapper = new ProblemGenerationAiRequestMapper(objectMapper);
 
-	@ParameterizedTest
-	@CsvSource({"concept,node.concept", "infer,node.infer"})
-	@DisplayName("Given v1 language 셀 When AI 요청으로 변환하면 Then 유형별 설정 노드를 보완한다")
-	void mapsSupportedLanguageCell(String type, String expectedNode) throws Exception {
+	@Test
+	@DisplayName("Given Backend가 진단 node를 선택했을 때 When AI 요청으로 변환하면 Then node 목록을 그대로 보존한다")
+	void preservesDiagnosisSelectedNodes() throws Exception {
 		// Given
 		String backend = """
-			{"target_source":"teacher_manual","area_tag":"language","type_tags":["%s"]}
-			""".formatted(type);
+			{"target_source":"teacher_manual","area_tag":"language","type_tags":["infer"],
+			 "manual_targets":["node.a","node.b"]}
+			""";
 
 		// When
 		var mapped = objectMapper.readTree(mapper.map(backend));
 
 		// Then
-		assertThat(mapped.get("manual_targets").get(0).asText())
-			.isEqualTo(expectedNode);
+		assertThat(mapped.get("manual_targets")).extracting(value->value.asText()).containsExactly("node.a","node.b");
 	}
 
 	@ParameterizedTest
-	@CsvSource({
-		"reading,infer",
-		"literature,concept",
-		"speech_writing,infer",
-		"media,concept",
-		"language,fact"
-	})
-	@DisplayName("Given v1 미지원 셀 When AI 요청으로 변환하면 Then AI 호출 전에 명시적 사유로 거절한다")
-	void rejectsUnsupportedCell(String area, String type) {
+	@ValueSource(strings={"[]","[\"node.a\",\"node.a\"]","[\"bad node\"]"})
+	@DisplayName("Given 비어 있거나 잘못된 node 목록 When AI 요청으로 변환하면 Then AI 호출 전에 명시적 사유로 거절한다")
+	void rejectsInvalidNodes(String targets) {
 		// Given
 		String backend = """
-			{"target_source":"teacher_manual","area_tag":"%s","type_tags":["%s"]}
-			""".formatted(area, type);
+			{"target_source":"teacher_manual","area_tag":"language","type_tags":["infer"],"manual_targets":%s}
+			""".formatted(targets);
 
 		// When/Then
 		assertThatThrownBy(() -> mapper.map(backend))
