@@ -5,7 +5,10 @@ import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.DefaultApplicationArguments;
+import com.checkon.aiadapter.common.kafka.CounselDraftKafkaProperties;
 import com.checkon.aiadapter.common.kafka.RiskDetectionKafkaProperties;
+import com.checkon.aiadapter.counsel.ai.AiCounselDraftHttpProperties;
+import com.checkon.aiadapter.counsel.application.CounselDraftProcessingProperties;
 import com.checkon.aiadapter.detection.ai.AiRiskDetectionHttpProperties;
 import com.checkon.aiadapter.detection.application.RiskDetectionProcessingProperties;
 import com.checkon.aiadapter.problem.application.ProblemGenerationProperties;
@@ -42,6 +45,12 @@ class RuntimeConfigurationValidatorTest {
 			Duration.ofSeconds(1),5,Duration.ofSeconds(3),Duration.ofSeconds(300),Duration.ofMinutes(21),3145728);
 		var problemKafka=new ProblemGenerationKafkaProperties(false,"requests","results","group",Duration.ofSeconds(1),
 			Duration.ofSeconds(30),Duration.ofSeconds(5),Duration.ofSeconds(10),8);
-		return new RuntimeConfigurationValidator(riskHttp,riskWorker,riskKafka,problem,problemKafka);
+		var counselHttp=new AiCounselDraftHttpProperties(false,"","/v1/counsel/drafts",Duration.ofSeconds(2),Duration.ofSeconds(500));
+		var counselWorker=new CounselDraftProcessingProperties(false,Duration.ofSeconds(1),Duration.ofMinutes(10),
+			Duration.ofSeconds(1),3);
+		var counselKafka=new CounselDraftKafkaProperties(false,"requested","completed","failed","group",
+			Duration.ofSeconds(1),Duration.ofSeconds(30),Duration.ofSeconds(1),Duration.ofSeconds(10),8);
+		return new RuntimeConfigurationValidator(riskHttp,riskWorker,riskKafka,problem,problemKafka,
+			counselHttp,counselWorker,counselKafka);
 	}
 }

@@ -14,6 +14,10 @@ public class WorkerExecutionConfiguration {
 	ThreadPoolTaskScheduler problemGenerationScheduler(WorkerExecutionProperties properties) {
 		return scheduler(properties.problemGenerationPoolSize(),"problem-generation-worker-");
 	}
+	@Bean("counselDraftScheduler")
+	ThreadPoolTaskScheduler counselDraftScheduler(WorkerExecutionProperties properties) {
+		return scheduler(properties.counselDraftPoolSize(),"counsel-draft-worker-");
+	}
 	@Bean("outboxPublisherScheduler")
 	ThreadPoolTaskScheduler outboxPublisherScheduler(WorkerExecutionProperties properties) {
 		return scheduler(properties.outboxPoolSize(),"outbox-publisher-");

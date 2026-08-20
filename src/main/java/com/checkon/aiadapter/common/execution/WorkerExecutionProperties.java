@@ -7,11 +7,13 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 public record WorkerExecutionProperties(
 	@DefaultValue("1") int riskDetectionPoolSize,
 	@DefaultValue("1") int problemGenerationPoolSize,
+	@DefaultValue("1") int counselDraftPoolSize,
 	@DefaultValue("1") int outboxPoolSize
 ) {
 	public WorkerExecutionProperties {
 		riskDetectionPoolSize=bounded(riskDetectionPoolSize,"riskDetectionPoolSize");
 		problemGenerationPoolSize=bounded(problemGenerationPoolSize,"problemGenerationPoolSize");
+		counselDraftPoolSize=bounded(counselDraftPoolSize,"counselDraftPoolSize");
 		outboxPoolSize=bounded(outboxPoolSize,"outboxPoolSize");
 	}
 	private static int bounded(int value,String name) {

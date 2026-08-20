@@ -1,0 +1,33 @@
+{
+  "event_id": "019b0000-0000-7000-8000-000000000101",
+  "event_type": "counsel-draft.requested",
+  "schema_version": "1.0",
+  "correlation_id": "019b0000-0000-7000-8000-000000000100",
+  "causation_id": "019b0000-0000-7000-8000-000000000101",
+  "tenant_alias": "tn_0123456789abcdef0123456789abcdef",
+  "run_id": "019b0000-0000-7000-8000-000000000100",
+  "attempt_id": "019b0000-0000-7000-8000-000000000100",
+  "request_id": "019b0000-0000-7000-8000-000000000102",
+  "idempotency_key": "iq_884",
+  "snapshot_hash": "sha256:20826dda25119fd1cd96c712c2f6a3180fdbca51e8a3503341501f8b5bda3823",
+  "occurred_at": "2026-08-20T02:11:00Z",
+  "payload": {
+    "inquiry": {
+      "inquiry_ref": "iq_884",
+      "topic": "grade",
+      "urgency": "immediate",
+      "received_at": "2026-07-31T14:20:00+09:00",
+      "text_masked": "요즘 아이가 힘들어하는 것 같은데 학원에서는 뭐를 하고 있는 건가요?"
+    },
+    "student_ref": "st_8f2a000000000000000000000000000a",
+    "parent_ref": "pa_9c1d000000000000000000000000000b",
+    "class_ref": "cl_a1a1000000000000000000000000000c",
+    "labels": ["narrative", "anxious"],
+    "dismissed_suggestions": [{"axis": "frequency", "value": "monthly"}],
+    "context": {
+      "snapshot_hash": "sha256:20826dda25119fd1cd96c712c2f6a3180fdbca51e8a3503341501f8b5bda3823",
+      "period_label": "2026년 7월",
+      "facts": [{"record_id": "le_2041", "summary": "6월 지문 42개·312문항"}]
+    }
+  }
+}

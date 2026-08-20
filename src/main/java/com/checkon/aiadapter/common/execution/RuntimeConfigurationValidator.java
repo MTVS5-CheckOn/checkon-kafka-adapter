@@ -8,7 +8,10 @@ import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.jdbc.core.JdbcTemplate;
+import com.checkon.aiadapter.common.kafka.CounselDraftKafkaProperties;
 import com.checkon.aiadapter.common.kafka.RiskDetectionKafkaProperties;
+import com.checkon.aiadapter.counsel.ai.AiCounselDraftHttpProperties;
+import com.checkon.aiadapter.counsel.application.CounselDraftProcessingProperties;
 import com.checkon.aiadapter.detection.ai.AiRiskDetectionHttpProperties;
 import com.checkon.aiadapter.detection.application.RiskDetectionProcessingProperties;
 import com.checkon.aiadapter.problem.application.ProblemGenerationProperties;
@@ -23,11 +26,17 @@ public class RuntimeConfigurationValidator implements ApplicationRunner {
 	private final RiskDetectionKafkaProperties riskKafka;
 	private final ProblemGenerationProperties problemWorker;
 	private final ProblemGenerationKafkaProperties problemKafka;
+	private final AiCounselDraftHttpProperties counselHttp;
+	private final CounselDraftProcessingProperties counselWorker;
+	private final CounselDraftKafkaProperties counselKafka;
 	public RuntimeConfigurationValidator(AiRiskDetectionHttpProperties riskHttp,
 		RiskDetectionProcessingProperties riskWorker,RiskDetectionKafkaProperties riskKafka,
-		ProblemGenerationProperties problemWorker,ProblemGenerationKafkaProperties problemKafka) {
+		ProblemGenerationProperties problemWorker,ProblemGenerationKafkaProperties problemKafka,
+		AiCounselDraftHttpProperties counselHttp,CounselDraftProcessingProperties counselWorker,
+		CounselDraftKafkaProperties counselKafka) {
 		this.riskHttp=riskHttp;this.riskWorker=riskWorker;this.riskKafka=riskKafka;
 		this.problemWorker=problemWorker;this.problemKafka=problemKafka;
+		this.counselHttp=counselHttp;this.counselWorker=counselWorker;this.counselKafka=counselKafka;
 	}
 	@Override public void run(ApplicationArguments args) {
 		boolean anyRisk=riskHttp.enabled()||riskWorker.workerEnabled()||riskKafka.enabled();
@@ -46,6 +55,15 @@ public class RuntimeConfigurationValidator implements ApplicationRunner {
 			requireHttpUrl(problemWorker.baseUrl(),"problem generation base-url");
 			if(problemWorker.lockTimeout().compareTo(problemWorker.connectTimeout().plus(problemWorker.readTimeout()))<=0)
 				throw invalid("problem generation lease timeout must exceed connect-timeout + read-timeout");
+		}
+		boolean anyCounsel=counselHttp.enabled()||counselWorker.workerEnabled()||counselKafka.enabled();
+		if(anyCounsel&&!(counselHttp.enabled()&&counselWorker.workerEnabled()&&counselKafka.enabled()))
+			throw invalid("counsel draft requires Kafka consumer, AI HTTP, and durable worker together");
+		if(anyCounsel) {
+			requireHttpUrl(counselHttp.baseUrl(),"counsel draft base-url");
+			if(counselHttp.connectTimeout()==null||counselHttp.readTimeout()==null) throw invalid("counsel draft timeouts are required");
+			if(counselWorker.lockTimeout().compareTo(counselHttp.connectTimeout().plus(counselHttp.readTimeout()))<=0)
+				throw invalid("counsel draft lease timeout must exceed connect-timeout + read-timeout");
 		}
 	}
 	private static void requireHttpUrl(String value,String name) {

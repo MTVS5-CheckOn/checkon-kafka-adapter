@@ -14,8 +14,10 @@ public class DurableQueueGauges {
 	public DurableQueueGauges(MeterRegistry registry,JdbcTemplate jdbc,Clock clock) {
 		register(registry,jdbc,clock,"risk_detection","risk_detection_request_inbox","next_attempt_at");
 		register(registry,jdbc,clock,"problem_generation","problem_generation_request_inbox","next_attempt_at");
+		register(registry,jdbc,clock,"counsel_draft","counsel_draft_request_inbox","next_attempt_at");
 		outbox(registry,jdbc,"risk_detection","risk_detection_outbox");
 		outbox(registry,jdbc,"problem_generation","problem_generation_outbox");
+		outbox(registry,jdbc,"counsel_draft","counsel_draft_outbox");
 	}
 	private static void register(MeterRegistry registry,JdbcTemplate jdbc,Clock clock,String feature,String table,String readyAt) {
 		registry.gauge("checkon.inbox.pending",java.util.List.of(io.micrometer.core.instrument.Tag.of("feature",feature)),jdbc,
