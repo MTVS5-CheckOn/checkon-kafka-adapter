@@ -114,7 +114,7 @@ class ProblemGenerationDurabilityIntegrationTest {
 		assertThat(jdbc.queryForObject(
 			"SELECT ai_execution_id FROM problem_generation_request_inbox WHERE event_id=?",
 			String.class, EVENT)).isEqualTo("ai-exec-48");
-		jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '1 second'");
+		jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '5 seconds'");
 		when(client.job(any(), any())).thenReturn(new AiProblemClient.JobResponse(read("""
 			{"data":{"job_id":"job-48","status":"succeeded","result":{"set_id":"set-48"}},"error":null,"meta":{"execution_id":"wrong-job-exec"}}
 			""",ProblemJobResponse.class),null));
@@ -154,7 +154,7 @@ class ProblemGenerationDurabilityIntegrationTest {
 			 "meta":{"execution_id":"canonical-exec"}}
 			""",ProblemSubmissionResponse.class));
 		assertThat(worker.processOne()).isTrue();
-		jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '1 second'");
+		jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '5 seconds'");
 		when(client.job(any(), any())).thenThrow(new AiProblemClientException(
 			"result_unavailable_after_restart", false, null));
 
@@ -194,7 +194,7 @@ class ProblemGenerationDurabilityIntegrationTest {
 		// Given
 		var event=decoder.decode(TENANT,requestEvent()); store.register(event,UUID.randomUUID(),requestEvent(),Instant.now());
 		when(client.submit(any(),any())).thenReturn(read("{\"data\":{\"job_id\":\"large-job\"},\"meta\":{\"execution_id\":\"large-exec\"}}",ProblemSubmissionResponse.class));
-		assertThat(worker.processOne()).isTrue(); jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '1 second'");
+		assertThat(worker.processOne()).isTrue(); jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '5 seconds'");
 		when(client.job(any(),any())).thenReturn(new AiProblemClient.JobResponse(read(
 			"{\"data\":{\"status\":\"succeeded\",\"result\":{\"set_id\":\"large-set\"}}}",ProblemJobResponse.class),null));
 		when(client.items(any(),any())).thenReturn(read("{\"data\":{\"set_id\":\"large-set\",\"items\":[{\"slot_index\":0,\"item_id\":\"large-item\",\"status\":\"verified\",\"current_revision_no\":0}]}}",ProblemItemSetResponse.class));
@@ -215,7 +215,7 @@ class ProblemGenerationDurabilityIntegrationTest {
 		// Given
 		var event=decoder.decode(TENANT,requestEvent()); store.register(event,UUID.randomUUID(),requestEvent(),Instant.now());
 		when(client.submit(any(),any())).thenReturn(read("{\"data\":{\"job_id\":\"wait-job\"},\"meta\":{\"execution_id\":\"wait-exec\"}}",ProblemSubmissionResponse.class));
-		assertThat(worker.processOne()).isTrue(); jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '1 second'");
+		assertThat(worker.processOne()).isTrue(); jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '5 seconds'");
 		Instant before=Instant.now();
 		when(client.job(any(),any())).thenReturn(new AiProblemClient.JobResponse(read("{\"data\":{\"status\":\"queued\"}}",ProblemJobResponse.class),Duration.ofSeconds(10)));
 
