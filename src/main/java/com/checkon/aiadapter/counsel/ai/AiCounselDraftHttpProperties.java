@@ -1,4 +1,4 @@
-package com.checkon.aiadapter.detection.ai;
+package com.checkon.aiadapter.counsel.ai;
 
 import java.net.URI;
 import java.time.Duration;
@@ -7,38 +7,37 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
- * connectTimeout/readTimeout default to the values documented in
- * docs/CONTRACT_BOUNDARY.md ("read timeout은 60초보다 긴 65초를 사용한다") so a
- * deployment that enables risk detection without separately setting
- * AI_CONNECT_TIMEOUT/AI_READ_TIMEOUT still boots with a working, contract-sized
- * timeout instead of null (mirrors ProblemGenerationProperties's own
- * @DefaultValue pattern for the same fields).
+ * connectTimeout/readTimeout default to the counsel contract's own numbers
+ * (POST runs a job to completion inline, K=1: worst case 5 LLM calls x 90s =
+ * 450s, so the adapter -- which now makes this call directly instead of the
+ * backend -- must allow at least 480s or a normal request gets cut client
+ * side while the AI keeps running). Mirrors CheckOn-backend's own
+ * checkon.ai.counsel.read-timeout default (500s) for consistency.
  */
-@ConfigurationProperties("checkon.ai.risk-detection")
-public record AiRiskDetectionHttpProperties(
+@ConfigurationProperties("checkon.ai.counsel-draft")
+public record AiCounselDraftHttpProperties(
 	boolean enabled,
 	String baseUrl,
-	String detectPath,
+	String draftsPath,
 	@DefaultValue("2s") Duration connectTimeout,
-	@DefaultValue("65s") Duration readTimeout
+	@DefaultValue("500s") Duration readTimeout
 ) {
 
 	URI requiredBaseUri() {
 		requiredText(baseUrl, "baseUrl");
 		URI uri = URI.create(baseUrl);
-		if (!"http".equalsIgnoreCase(uri.getScheme())
-			&& !"https".equalsIgnoreCase(uri.getScheme())) {
+		if (!"http".equalsIgnoreCase(uri.getScheme()) && !"https".equalsIgnoreCase(uri.getScheme())) {
 			throw new IllegalArgumentException("baseUrl must use http or https");
 		}
 		return uri;
 	}
 
-	String requiredDetectPath() {
-		requiredText(detectPath, "detectPath");
-		if (!detectPath.startsWith("/")) {
-			throw new IllegalArgumentException("detectPath must start with '/'");
+	String requiredDraftsPath() {
+		requiredText(draftsPath, "draftsPath");
+		if (!draftsPath.startsWith("/")) {
+			throw new IllegalArgumentException("draftsPath must start with '/'");
 		}
-		return detectPath;
+		return draftsPath;
 	}
 
 	Duration requiredConnectTimeout() {

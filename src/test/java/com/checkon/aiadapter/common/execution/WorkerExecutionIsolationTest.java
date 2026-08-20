@@ -13,7 +13,7 @@ class WorkerExecutionIsolationTest {
 	void isolatesLongProblemGenerationFromRiskAndOutbox() throws Exception {
 		// Given
 		var configuration=new WorkerExecutionConfiguration();
-		var properties=new WorkerExecutionProperties(1,1,1);
+		var properties=new WorkerExecutionProperties(1,1,1,1);
 		ThreadPoolTaskScheduler risk=configuration.riskDetectionScheduler(properties);
 		ThreadPoolTaskScheduler problem=configuration.problemGenerationScheduler(properties);
 		ThreadPoolTaskScheduler outbox=configuration.outboxPublisherScheduler(properties);

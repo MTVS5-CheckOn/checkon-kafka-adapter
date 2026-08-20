@@ -126,7 +126,7 @@ class ProblemGenerationWorkerCycleIntegrationTest {
 			kafka.send(REQUEST_TOPIC, TENANT, requestEvent()).get(10, TimeUnit.SECONDS);
 			awaitInbox(Duration.ofSeconds(15));
 			assertThat(worker.processOne()).isTrue();
-			jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '1 second'");
+			jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '5 seconds'");
 			assertThat(worker.processOne()).isTrue();
 			assertThat(outbox.publishOne()).isTrue();
 			ConsumerRecord<String, String> result = pollOne(consumer, Duration.ofSeconds(15));
