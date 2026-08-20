@@ -2,6 +2,7 @@ package com.checkon.aiadapter.counsel.ai;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.http.HttpMethod.GET;
 import static org.springframework.http.HttpMethod.POST;
 import static org.springframework.http.HttpStatus.CONFLICT;
 import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
@@ -16,6 +17,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -152,6 +154,78 @@ class HttpAiCounselDraftClientTest {
 				((AiCounselDraftClientException) exception).reason()
 			).isEqualTo(AiCounselDraftClientException.Reason.EMPTY_RESPONSE));
 		server.verify();
+	}
+
+	@Test
+	@DisplayName("Given 비종단 status 응답 When GET을 호출하면 Then Retry-After 헤더를 초 단위로 읽는다")
+	void readsRetryAfterHeaderInSeconds() {
+		server.expect(once(), requestTo("http://ai.example.test/v1/counsel/drafts/019846dc-7c00-7000-8000-0000000006a1"))
+			.andExpect(method(GET))
+			.andExpect(header(HttpAiCounselDraftClient.TENANT_ID_HEADER, headers.tenantAlias()))
+			.andExpect(header(HttpAiCounselDraftClient.REQUEST_ID_HEADER, headers.requestId()))
+			.andRespond(withSuccess("""
+				{"data":{"job_id":"019846dc-7c00-7000-8000-0000000006a1","status":"running"},
+				 "error":null,"meta":{"execution_id":"ai-exec-1","versions":null}}
+				""", APPLICATION_JSON).headers(retryAfterHeader("5")));
+
+		AiCounselDraftClient.PollResponse polled = client.getDraft("019846dc-7c00-7000-8000-0000000006a1", headers);
+
+		assertThat(polled.body().data().status()).isEqualTo("running");
+		assertThat(polled.retryAfter()).isEqualTo(Duration.ofSeconds(5));
+		server.verify();
+	}
+
+	@Test
+	@DisplayName("Given 종단 status 응답(Retry-After 없음) When GET을 호출하면 Then retryAfter는 null이다")
+	void returnsNullRetryAfterForTerminalResponses() {
+		server.expect(once(), requestTo("http://ai.example.test/v1/counsel/drafts/019846dc-7c00-7000-8000-0000000006a1"))
+			.andExpect(method(GET))
+			.andRespond(withSuccess("""
+				{"data":{"job_id":"019846dc-7c00-7000-8000-0000000006a1","status":"succeeded"},
+				 "error":null,"meta":{"execution_id":"ai-exec-1","versions":null}}
+				""", APPLICATION_JSON));
+
+		AiCounselDraftClient.PollResponse polled = client.getDraft("019846dc-7c00-7000-8000-0000000006a1", headers);
+
+		assertThat(polled.body().data().status()).isEqualTo("succeeded");
+		assertThat(polled.retryAfter()).isNull();
+		server.verify();
+	}
+
+	@Test
+	@DisplayName("Given 존재하지 않는 job_id When GET을 호출하면 Then HTTP 상태를 보존한다")
+	void mapsGetHttpFailure() {
+		server.expect(once(), requestTo("http://ai.example.test/v1/counsel/drafts/missing-job"))
+			.andRespond(withStatus(org.springframework.http.HttpStatus.NOT_FOUND));
+
+		assertThatThrownBy(() -> client.getDraft("missing-job", headers))
+			.isInstanceOf(AiCounselDraftClientException.class)
+			.satisfies(exception -> {
+				var clientException = (AiCounselDraftClientException) exception;
+				assertThat(clientException.reason()).isEqualTo(AiCounselDraftClientException.Reason.HTTP_ERROR);
+				assertThat(clientException.httpStatus()).isEqualTo(404);
+			});
+		server.verify();
+	}
+
+	@Test
+	@DisplayName("Given 연결 실패 When GET을 호출하면 Then 네트워크 오류로 분류한다")
+	void mapsGetNetworkFailure() {
+		server.expect(once(), requestTo("http://ai.example.test/v1/counsel/drafts/019846dc-7c00-7000-8000-0000000006a1"))
+			.andRespond(withException(new IOException("connection refused")));
+
+		assertThatThrownBy(() -> client.getDraft("019846dc-7c00-7000-8000-0000000006a1", headers))
+			.isInstanceOf(AiCounselDraftClientException.class)
+			.satisfies(exception -> assertThat(
+				((AiCounselDraftClientException) exception).reason()
+			).isEqualTo(AiCounselDraftClientException.Reason.NETWORK_ERROR));
+		server.verify();
+	}
+
+	private static org.springframework.http.HttpHeaders retryAfterHeader(String seconds) {
+		var headers = new org.springframework.http.HttpHeaders();
+		headers.set("Retry-After", seconds);
+		return headers;
 	}
 
 	private String readFixture(String path) throws IOException {

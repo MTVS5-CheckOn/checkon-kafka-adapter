@@ -1,6 +1,7 @@
 package com.checkon.aiadapter.counsel.ai;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
@@ -83,6 +84,45 @@ public class HttpAiCounselDraftClient implements AiCounselDraftClient {
 		}
 		finally {
 			sample.stop(Metrics.timer("checkon.ai.http.duration", "feature", "counsel_draft", "operation", "create_draft"));
+		}
+	}
+
+	@Override
+	public PollResponse getDraft(String jobId, AiCounselDraftRequestHeaders headers) {
+		Timer.Sample sample = Timer.start(Metrics.globalRegistry);
+		try {
+			var response = restClient.get()
+				.uri(draftsPath + "/{jobId}", jobId)
+				.header(TENANT_ID_HEADER, headers.tenantAlias())
+				.header(REQUEST_ID_HEADER, headers.requestId())
+				.retrieve()
+				.toEntity(AiCounselDraftResponse.class);
+			AiCounselDraftResponse body = response.getBody();
+			if (body == null) {
+				throw AiCounselDraftClientException.emptyResponse();
+			}
+			return new PollResponse(body, retryAfter(response.getHeaders().getFirst("Retry-After")));
+		}
+		catch (RestClientResponseException exception) {
+			int status = exception.getStatusCode().value();
+			throw AiCounselDraftClientException.httpError(status, exception.getResponseBodyAsString(), exception);
+		}
+		catch (RestClientException exception) {
+			throw AiCounselDraftClientException.networkError(exception);
+		}
+		finally {
+			sample.stop(Metrics.timer("checkon.ai.http.duration", "feature", "counsel_draft", "operation", "get_draft"));
+		}
+	}
+
+	private static Duration retryAfter(String value) {
+		if (value == null || value.isBlank()) return null;
+		try {
+			long seconds = Long.parseLong(value.trim());
+			return seconds > 0 ? Duration.ofSeconds(seconds) : null;
+		}
+		catch (NumberFormatException ignored) {
+			return null;
 		}
 	}
 }
