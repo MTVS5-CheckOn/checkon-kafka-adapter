@@ -10,11 +10,13 @@ import java.util.UUID;
 import org.springframework.stereotype.Component;
 
 import com.checkon.aiadapter.problem.infrastructure.ProblemGenerationStore.ClaimedRequest;
+import com.checkon.aiadapter.problem.ai.ProblemJobResponse;
+import com.checkon.aiadapter.problem.ai.ProblemItemSetResponse;
+import com.checkon.aiadapter.problem.ai.ProblemItemDetailResponse;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.node.ObjectNode;
 
 @Component
 public class ProblemGenerationOutcomeFactory {
@@ -25,26 +27,24 @@ public class ProblemGenerationOutcomeFactory {
 	}
 
 	public String succeeded(UUID eventId, ClaimedRequest request, String jobId,
-		JsonNode jobResponse, JsonNode itemsResponse,List<JsonNode> detailResponses, Instant now) {
-		JsonNode data = requiredObject(itemsResponse, "data");
-		String setId = requiredText(data, "set_id");
-		List<JsonNode> items = mergeSlots(data.get("items"),detailResponses);
+		ProblemJobResponse jobResponse, ProblemItemSetResponse itemsResponse,
+		List<ProblemItemDetailResponse> detailResponses, Instant now) {
+		if(itemsResponse.data()==null) throw new IllegalArgumentException("data must be an object");
+		String setId = required(itemsResponse.data().setId(),"set_id");
+		if(!setId.equals(jobResponse.requiredSetId())) throw new IllegalArgumentException("job and summary set_id mismatch");
+		if(itemsResponse.data().jobId()!=null&&!jobId.equals(itemsResponse.data().jobId())) throw new IllegalArgumentException("job_id mismatch");
+		List<NormalizedProblemResult.Slot> items = mergeSlots(setId,itemsResponse.data().items(),detailResponses);
 		if (items.isEmpty()) throw new IllegalArgumentException("AI items response contains no slots");
-		Map<String, Object> result = new LinkedHashMap<>();
-		result.put("set_id", setId);
-		result.put("items", items);
-		result.put("status_counts",data.get("status_counts"));
-		result.put("requested_count",items.size());
-		result.put("processed_count",items.size());
-		JsonNode meta = object(itemsResponse, "meta");
-		if (meta == null) meta = object(jobResponse, "meta");
+		NormalizedProblemResult result = new NormalizedProblemResult(setId,items,
+			itemsResponse.data().statusCounts(),items.size(),items.size(),
+			itemsResponse.meta()==null?null:itemsResponse.meta().versions());
 		Map<String, Object> payload = basePayload(request);
 		payload.put("job_id", jobId);
 		payload.put("execution_id", request.aiExecutionId());
 		payload.put("set_id", setId);
 		payload.put("result_status", "completed");
 		payload.put("result", result);
-		payload.put("versions", meta == null ? null : meta.get("versions"));
+		payload.put("versions", result.versions());
 		return envelope(eventId, "worker_job.succeeded", request, payload, now);
 	}
 
@@ -59,18 +59,29 @@ public class ProblemGenerationOutcomeFactory {
 		return envelope(eventId, "worker_job.failed", request, payload, now);
 	}
 
-	private List<JsonNode> mergeSlots(JsonNode wrappers,List<JsonNode> details) {
-		if (wrappers == null || !wrappers.isArray()) return List.of();
-		Map<Integer,JsonNode> bySlot=new LinkedHashMap<>();
-		for(JsonNode detail:details) { JsonNode value=requiredObject(detail,"data"); bySlot.put(value.path("slot_index").asInt(),value); }
-		List<JsonNode> flattened = new ArrayList<>();
-		for (JsonNode wrapper : wrappers) {
-			ObjectNode slot=((ObjectNode)wrapper).deepCopy(); int index=wrapper.path("slot_index").asInt();
-			JsonNode detail=bySlot.get(index); slot.set("item",detail==null?null:detail.get("item"));
-			if(detail!=null) { slot.set("verification",detail.get("verification")); slot.set("available_actions",detail.get("available_actions")); }
-			flattened.add(slot);
+	private List<NormalizedProblemResult.Slot> mergeSlots(String setId,
+		List<ProblemItemSetResponse.ItemSummary> summaries,List<ProblemItemDetailResponse> details) {
+		if(summaries==null) throw new IllegalArgumentException("items must be an array");
+		Map<Integer,ProblemItemDetailResponse.Data> bySlot=new LinkedHashMap<>();
+		for(ProblemItemDetailResponse detail:details) {
+			if(detail==null||detail.data()==null||detail.data().slotIndex()==null) throw new IllegalArgumentException("detail slot_index is required");
+			if(detail.data().setId()!=null&&!setId.equals(detail.data().setId())) throw new IllegalArgumentException("detail set_id mismatch");
+			if(bySlot.put(detail.data().slotIndex(),detail.data())!=null) throw new IllegalArgumentException("duplicate detail slot_index");
 		}
-		return List.copyOf(flattened);
+		Map<Integer,Boolean> seen=new LinkedHashMap<>();
+		List<NormalizedProblemResult.Slot> result=new ArrayList<>();
+		for(ProblemItemSetResponse.ItemSummary summary:summaries) {
+			if(summary==null||summary.slotIndex()==null||summary.slotIndex()<0) throw new IllegalArgumentException("slot_index must be a non-negative integer");
+			if(seen.put(summary.slotIndex(),Boolean.TRUE)!=null) throw new IllegalArgumentException("duplicate slot_index");
+			ProblemItemDetailResponse.Data detail=bySlot.get(summary.slotIndex());
+			if(summary.itemId()!=null&&detail==null) throw new IllegalArgumentException("summary item has no matching detail slot");
+			if(detail!=null&&detail.itemId()!=null&&!detail.itemId().equals(summary.itemId())) throw new IllegalArgumentException("summary/detail item_id mismatch");
+			result.add(new NormalizedProblemResult.Slot(summary.slotIndex(),summary.itemId(),summary.status(),
+				summary.failureReason(),summary.failureDetail(),detail==null?null:detail.item(),
+				detail==null?null:detail.verification(),detail==null?null:detail.availableActions()));
+		}
+		if(!seen.keySet().containsAll(bySlot.keySet())) throw new IllegalArgumentException("detail contains unknown slot_index");
+		return List.copyOf(result);
 	}
 
 	private static Map<String, Object> basePayload(ClaimedRequest request) {
@@ -98,25 +109,8 @@ public class ProblemGenerationOutcomeFactory {
 		catch (JacksonException exception) { throw new IllegalStateException("Outcome serialization failed", exception); }
 	}
 
-	private static JsonNode requiredObject(JsonNode node, String field) {
-		JsonNode value = object(node, field);
-		if (value == null) throw new IllegalArgumentException(field + " must be an object");
+	private static String required(String value,String field) {
+		if(value==null||value.isBlank()) throw new IllegalArgumentException(field+" must not be blank");
 		return value;
-	}
-
-	private static JsonNode object(JsonNode node, String field) {
-		JsonNode value = node == null ? null : node.get(field);
-		return value != null && value.isObject() ? value : null;
-	}
-
-	private static String requiredText(JsonNode node, String field) {
-		String value = optionalText(node, field);
-		if (value == null) throw new IllegalArgumentException(field + " must not be blank");
-		return value;
-	}
-
-	private static String optionalText(JsonNode node, String field) {
-		JsonNode value = node == null ? null : node.get(field);
-		return value != null && value.isTextual() && !value.asText().isBlank() ? value.asText() : null;
 	}
 }

@@ -55,7 +55,13 @@ import tools.jackson.databind.ObjectMapper;
 	"checkon.kafka.risk-detection.enabled=true",
 	"checkon.kafka.risk-detection.outbox-poll-delay=1h",
 	"checkon.ai.risk-detection.worker-enabled=true",
+	"checkon.ai.risk-detection.enabled=true",
+	"checkon.ai.risk-detection.base-url=http://localhost:1",
+	"checkon.ai.risk-detection.detect-path=/v1/detect",
+	"checkon.ai.risk-detection.connect-timeout=1s",
+	"checkon.ai.risk-detection.read-timeout=2s",
 	"checkon.ai.risk-detection.poll-delay=1h",
+	"checkon.ai.risk-detection.scheduler-enabled=false",
 	"spring.kafka.consumer.auto-offset-reset=earliest"
 })
 @Import(RiskDetectionVerticalSliceIntegrationTest.TopicConfiguration.class)
@@ -106,7 +112,9 @@ class RiskDetectionVerticalSliceIntegrationTest {
 
 	@BeforeEach
 	void setUp() throws Exception {
+		jdbcTemplate.update("DELETE FROM outbox_publish_attempt WHERE worker_kind='risk_detection'");
 		jdbcTemplate.update("DELETE FROM risk_detection_outbox");
+		jdbcTemplate.update("DELETE FROM risk_detection_attempt");
 		jdbcTemplate.update("DELETE FROM risk_detection_request_inbox");
 		rawRequest = readFixture();
 		requestEvent = objectMapper.readValue(rawRequest, RiskDetectionRequestedEvent.class);

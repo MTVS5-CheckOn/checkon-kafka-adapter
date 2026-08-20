@@ -16,4 +16,12 @@ public record ProblemGenerationKafkaProperties(
 	@DefaultValue("5s") Duration outboxRetryDelay,
 	@DefaultValue("10s") Duration producerSendTimeout,
 	@DefaultValue("8") int outboxMaxAttempts
-) { }
+) {
+	public ProblemGenerationKafkaProperties {
+		if(requestTopic==null||requestTopic.isBlank()||resultTopic==null||resultTopic.isBlank()||consumerGroupId==null||consumerGroupId.isBlank())
+			throw new IllegalArgumentException("problem generation Kafka names must not be blank");
+		for(var value:new Duration[]{outboxPollDelay,outboxLockTimeout,outboxRetryDelay,producerSendTimeout})
+			if(value==null||value.isZero()||value.isNegative()) throw new IllegalArgumentException("problem generation Kafka durations must be positive");
+		if(outboxMaxAttempts<1||outboxMaxAttempts>100) throw new IllegalArgumentException("outboxMaxAttempts must be 1..100");
+	}
+}

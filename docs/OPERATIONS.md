@@ -1,4 +1,4 @@
-# 위험 탐지 운영 가이드
+# Adapter 운영 가이드
 
 ## 상태 확인
 
@@ -26,11 +26,40 @@ HTTP client 내부 자동 재시도는 사용하지 않습니다. Kafka 요청 �
 
 수동 SQL을 저장소에 고정하지 않은 이유는 운영 계정 권한과 감사 절차가 아직 확정되지 않았기 때문입니다. 운영 도구를 추가할 때는 대상 `event_id`, 실행자, 사유, 변경 전후 상태를 감사 기록으로 남겨야 합니다.
 
+### Outbox DEAD 수동 복구 통제
+
+운영 권한 정책이 확정되기 전에는 관리 API나 범용 UPDATE 권한을 만들지 않습니다. 복구는 승인된 변경 작업으로만 수행하며 대상 기능과 event ID, 실행자·승인자·사유, 변경 전후 Inbox/Outbox 상태, DB 실행 시각과 영향 행 수, 이후 broker ack를 모두 증적으로 남깁니다. fencing 값을 낮추지 않고 Outbox `PENDING`과 대응 Inbox `OUTCOME_PENDING`을 한 트랜잭션에서 맞춥니다. 향후에는 append-only 감사 테이블과 최소 권한 stored procedure를 먼저 설계하며, 운영 역할이 확정되기 전 자동 복구 기능은 만들지 않습니다.
+
+## 관측 지표
+
+- `checkon.inbox.pending`, `checkon.inbox.oldest.wait.seconds`
+- `checkon.worker.transitions`, `checkon.worker.stale.reclaims`, `checkon.worker.fencing.rejections`
+- `checkon.ai.http.duration`
+- `checkon.outbox.count` (`PENDING`, `DEAD`)
+
+metric label에는 payload, alias/UUID, 학생·강사 정보, 문항·상담 내용을 넣지 않습니다. DLT는 요청 topic의 `.dlt` consumer lag와 최근 record 발생 여부를 기준으로 확인합니다. 현재 DLT lag exporter는 배포 모니터링 스택 책임이므로 이 저장소에서 broker 자격증명을 추정해 구현하지 않았습니다.
+
+## 실행기 격리
+
+- `risk-detection-worker-*`: 위험 탐지 HTTP 처리
+- `problem-generation-worker-*`: 제출·poll·summary/detail HTTP 처리
+- `outbox-publisher-*`: 두 기능의 Kafka 결과 발행
+- `risk-detection-retry-*`: Kafka retry-topic backoff 전용
+
+각 pool은 1..16의 고정 크기이고 기본값은 1입니다. 종료 시 신규 실행을 멈추고 진행 중 작업을 최대 30초 기다립니다. HTTP 호출이 그보다 길어 종료되면 durable claim이 lease 만료 후 새 fencing 값으로 복구됩니다.
+
+## 시작 전 외부 전제조건
+
+- Backend 내장 HTTP fallback과 독립 Adapter를 동시에 활성화하지 않음
+- 토픽/ACL/파티션/보존 기간과 3 MiB 결과 한도가 배포 Kafka에 반영됨
+- AI가 같은 idempotency key와 같은 payload를 멱등 처리함
+- DLT consumer lag 및 Outbox DEAD 경보가 운영 모니터링에 연결됨
+
 ## 로그와 보안
 
 - Kafka payload와 AI HTTP body 전체를 로그에 남기지 않습니다.
 - 원본 강사·학생 UUID나 개인정보를 Adapter에서 새로 추가하지 않습니다.
-- 장애 추적에는 opaque alias와 `event_id`, `request_id`, `correlation_id`, `causation_id`만 사용합니다.
+- 일반 애플리케이션 로그에는 오류 코드·HTTP status·기능명만 사용합니다. UUID/alias 단위 추적은 접근 통제된 DB와 Kafka 원본의 승인된 조사 절차에서만 수행합니다.
 - 실제 DB 비밀번호, AI 인증정보와 토큰은 환경변수 또는 비밀 저장소로 주입합니다.
 # Problem Generation worker
 

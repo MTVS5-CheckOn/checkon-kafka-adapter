@@ -38,6 +38,10 @@ import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import com.checkon.aiadapter.problem.ai.AiProblemClient;
+import com.checkon.aiadapter.problem.ai.ProblemSubmissionResponse;
+import com.checkon.aiadapter.problem.ai.ProblemJobResponse;
+import com.checkon.aiadapter.problem.ai.ProblemItemSetResponse;
+import com.checkon.aiadapter.problem.ai.ProblemItemDetailResponse;
 import com.checkon.aiadapter.problem.application.ProblemGenerationExecutionWorker;
 import com.checkon.aiadapter.problem.kafka.ProblemGenerationOutboxPublisher;
 
@@ -49,6 +53,7 @@ import tools.jackson.databind.ObjectMapper;
 	"checkon.ai.problem-generation.worker-enabled=true",
 	"checkon.ai.problem-generation.base-url=http://localhost:1",
 	"checkon.ai.problem-generation.poll-delay=1h",
+	"checkon.ai.problem-generation.scheduler-enabled=false",
 	"checkon.ai.problem-generation.poll-interval=1ms",
 	"checkon.kafka.problem-generation.outbox-poll-delay=1h",
 	"spring.kafka.consumer.auto-offset-reset=earliest"
@@ -85,7 +90,9 @@ class ProblemGenerationWorkerCycleIntegrationTest {
 
 	@BeforeEach
 	void clean() {
+		jdbc.update("DELETE FROM outbox_publish_attempt WHERE worker_kind='problem_generation'");
 		jdbc.update("DELETE FROM problem_generation_outbox");
+		jdbc.update("DELETE FROM problem_generation_attempt");
 		jdbc.update("DELETE FROM problem_generation_request_inbox");
 	}
 
@@ -93,24 +100,24 @@ class ProblemGenerationWorkerCycleIntegrationTest {
 	@DisplayName("Given Backend child 이벤트 When worker 한 사이클을 실행하면 Then 정본 ID와 문항을 Kafka 결과로 발행한다")
 	void completesOneKafkaHttpKafkaCycle() throws Exception {
 		// Given
-		when(client.submit(any(), any())).thenReturn(objectMapper.readTree("""
+		when(client.submit(any(), any())).thenReturn(objectMapper.readValue("""
 			{"data":{"job_id":"cycle-job","status":"queued"},"error":null,
 			 "meta":{"execution_id":"cycle-post-execution"}}
-			"""));
-		when(client.job(any(), any())).thenReturn(new AiProblemClient.JobResponse(objectMapper.readTree("""
+			""",ProblemSubmissionResponse.class));
+		when(client.job(any(), any())).thenReturn(new AiProblemClient.JobResponse(objectMapper.readValue("""
 			{"data":{"job_id":"cycle-job","status":"succeeded","result":{"set_id":"cycle-set"}},"error":null,
 			 "meta":{"execution_id":"unstable-get-execution"}}
-			"""),Duration.ofSeconds(1)));
-		when(client.items(any(), any())).thenReturn(objectMapper.readTree("""
+			""",ProblemJobResponse.class),Duration.ofSeconds(1)));
+		when(client.items(any(), any())).thenReturn(objectMapper.readValue("""
 			{"data":{"set_id":"cycle-set","status_counts":{"needs_review":1,"dropped":1},"items":[{"slot_index":0,"item_id":"cycle-item",
 			 "status":"needs_review","current_revision_no":0},{"slot_index":1,"item_id":null,"status":"dropped","current_revision_no":0,"failure_reason":"generation_exhausted"}]},"error":null,
 			 "meta":{"execution_id":"another-unstable-get-execution","versions":{"contract":"0.1"}}}
-			"""));
-		when(client.item(any(),anyInt(),any())).thenReturn(objectMapper.readTree("""
+			""",ProblemItemSetResponse.class));
+		when(client.item(any(),anyInt(),any())).thenReturn(objectMapper.readValue("""
 			{"data":{"set_id":"cycle-set","slot_index":0,"item_id":"cycle-item","status":"needs_review",
 			 "item":{"stem":"사이클 문제","choices":[{"no":1,"text":"정답"},{"no":2,"text":"오답"}],
 			 "answer":{"correct_no":1},"rationale":"사이클 근거"}}}
-			"""));
+			""",ProblemItemDetailResponse.class));
 
 		try (KafkaConsumer<String, String> consumer = resultConsumer()) {
 			consumer.subscribe(List.of(RESULT_TOPIC));

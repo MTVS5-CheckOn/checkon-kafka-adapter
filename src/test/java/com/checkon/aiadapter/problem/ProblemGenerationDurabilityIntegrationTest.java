@@ -26,6 +26,10 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import com.checkon.aiadapter.problem.ai.AiProblemClient;
 import com.checkon.aiadapter.problem.ai.AiProblemClientException;
+import com.checkon.aiadapter.problem.ai.ProblemSubmissionResponse;
+import com.checkon.aiadapter.problem.ai.ProblemJobResponse;
+import com.checkon.aiadapter.problem.ai.ProblemItemSetResponse;
+import com.checkon.aiadapter.problem.ai.ProblemItemDetailResponse;
 import com.checkon.aiadapter.problem.application.ProblemGenerationExecutionWorker;
 import com.checkon.aiadapter.problem.infrastructure.ProblemGenerationStore;
 import com.checkon.aiadapter.problem.kafka.ProblemGenerationRequestDecoder;
@@ -36,9 +40,12 @@ import tools.jackson.databind.ObjectMapper;
 @SpringBootTest(properties = {
 	"checkon.ai.problem-generation.worker-enabled=true",
 	"checkon.ai.problem-generation.poll-delay=1h",
+	"checkon.ai.problem-generation.scheduler-enabled=false",
 	"checkon.ai.problem-generation.poll-interval=1ms",
 	"checkon.ai.problem-generation.base-url=http://localhost:1",
-	"checkon.kafka.problem-generation.enabled=false"
+	"checkon.kafka.problem-generation.enabled=true",
+	"checkon.kafka.problem-generation.outbox-poll-delay=1h",
+	"spring.kafka.listener.auto-startup=false"
 })
 class ProblemGenerationDurabilityIntegrationTest {
 	private static final String TENANT = "tn_0123456789abcdef0123456789abcdef";
@@ -68,7 +75,9 @@ class ProblemGenerationDurabilityIntegrationTest {
 
 	@BeforeEach
 	void clean() {
+		jdbc.update("DELETE FROM outbox_publish_attempt WHERE worker_kind='problem_generation'");
 		jdbc.update("DELETE FROM problem_generation_outbox");
+		jdbc.update("DELETE FROM problem_generation_attempt");
 		jdbc.update("DELETE FROM problem_generation_request_inbox");
 	}
 
@@ -95,9 +104,9 @@ class ProblemGenerationDurabilityIntegrationTest {
 		// Given
 		var event = decoder.decode(TENANT, requestEvent());
 		store.register(event, UUID.fromString("01980000-0000-7000-8000-000000000004"), requestEvent(), Instant.now());
-		when(client.submit(any(), any())).thenReturn(objectMapper.readTree("""
+		when(client.submit(any(), any())).thenReturn(read("""
 			{"data":{"job_id":"job-48","status":"queued"},"error":null,"meta":{"execution_id":"ai-exec-48"}}
-			"""));
+			""",ProblemSubmissionResponse.class));
 
 		// When: submit identifiers are persisted before a later process instance claims POLL.
 		assertThat(worker.processOne()).isTrue();
@@ -106,18 +115,18 @@ class ProblemGenerationDurabilityIntegrationTest {
 			"SELECT ai_execution_id FROM problem_generation_request_inbox WHERE event_id=?",
 			String.class, EVENT)).isEqualTo("ai-exec-48");
 		jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '1 second'");
-		when(client.job(any(), any())).thenReturn(new AiProblemClient.JobResponse(objectMapper.readTree("""
+		when(client.job(any(), any())).thenReturn(new AiProblemClient.JobResponse(read("""
 			{"data":{"job_id":"job-48","status":"succeeded","result":{"set_id":"set-48"}},"error":null,"meta":{"execution_id":"wrong-job-exec"}}
-			"""),null));
-		when(client.items(any(), any())).thenReturn(objectMapper.readTree("""
+			""",ProblemJobResponse.class),null));
+		when(client.items(any(), any())).thenReturn(read("""
 			{"data":{"set_id":"set-48","status_counts":{"needs_review":1},"items":[
 			 {"slot_index":0,"item_id":"item-48","status":"needs_review","current_revision_no":0}
 			]},"error":null,"meta":{"execution_id":"wrong-items-meta-exec","versions":{"contract":"0.1"}}}
-			"""));
-		when(client.item(any(), anyInt(), any())).thenReturn(objectMapper.readTree("""
+			""",ProblemItemSetResponse.class));
+		when(client.item(any(), anyInt(), any())).thenReturn(read("""
 			{"data":{"set_id":"set-48","slot_index":0,"item_id":"item-48","status":"needs_review",
 			 "item":{"stem":"문제 본문","choices":[{"no":1,"text":"정답"},{"no":2,"text":"오답"}],"answer":{"correct_no":1},"rationale":"근거"}}}
-			"""));
+			""",ProblemItemDetailResponse.class));
 		assertThat(worker.processOne()).isTrue();
 
 		// Then
@@ -140,10 +149,10 @@ class ProblemGenerationDurabilityIntegrationTest {
 		// Given
 		var event = decoder.decode(TENANT, requestEvent());
 		store.register(event, UUID.randomUUID(), requestEvent(), Instant.now());
-		when(client.submit(any(), any())).thenReturn(objectMapper.readTree("""
+		when(client.submit(any(), any())).thenReturn(read("""
 			{"data":{"job_id":"lost-job","status":"queued"},"error":null,
 			 "meta":{"execution_id":"canonical-exec"}}
-			"""));
+			""",ProblemSubmissionResponse.class));
 		assertThat(worker.processOne()).isTrue();
 		jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '1 second'");
 		when(client.job(any(), any())).thenThrow(new AiProblemClientException(
@@ -184,13 +193,13 @@ class ProblemGenerationDurabilityIntegrationTest {
 	void rejectsOversizedNormalizedResult() throws Exception {
 		// Given
 		var event=decoder.decode(TENANT,requestEvent()); store.register(event,UUID.randomUUID(),requestEvent(),Instant.now());
-		when(client.submit(any(),any())).thenReturn(objectMapper.readTree("{\"data\":{\"job_id\":\"large-job\"},\"meta\":{\"execution_id\":\"large-exec\"}}"));
+		when(client.submit(any(),any())).thenReturn(read("{\"data\":{\"job_id\":\"large-job\"},\"meta\":{\"execution_id\":\"large-exec\"}}",ProblemSubmissionResponse.class));
 		assertThat(worker.processOne()).isTrue(); jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '1 second'");
-		when(client.job(any(),any())).thenReturn(new AiProblemClient.JobResponse(objectMapper.readTree(
-			"{\"data\":{\"status\":\"succeeded\",\"result\":{\"set_id\":\"large-set\"}}}"),null));
-		when(client.items(any(),any())).thenReturn(objectMapper.readTree("{\"data\":{\"set_id\":\"large-set\",\"items\":[{\"slot_index\":0,\"item_id\":\"large-item\",\"status\":\"verified\",\"current_revision_no\":0}]}}"));
+		when(client.job(any(),any())).thenReturn(new AiProblemClient.JobResponse(read(
+			"{\"data\":{\"status\":\"succeeded\",\"result\":{\"set_id\":\"large-set\"}}}",ProblemJobResponse.class),null));
+		when(client.items(any(),any())).thenReturn(read("{\"data\":{\"set_id\":\"large-set\",\"items\":[{\"slot_index\":0,\"item_id\":\"large-item\",\"status\":\"verified\",\"current_revision_no\":0}]}}",ProblemItemSetResponse.class));
 		String huge="가".repeat(1_100_000);
-		when(client.item(any(),anyInt(),any())).thenReturn(objectMapper.readTree("{\"data\":{\"slot_index\":0,\"item\":{\"stem\":\""+huge+"\",\"choices\":[{\"no\":1,\"text\":\"정답\"},{\"no\":2,\"text\":\"오답\"}],\"answer\":{\"correct_no\":1}}}}"));
+		when(client.item(any(),anyInt(),any())).thenReturn(read("{\"data\":{\"set_id\":\"large-set\",\"slot_index\":0,\"item_id\":\"large-item\",\"item\":{\"stem\":\""+huge+"\",\"choices\":[{\"no\":1,\"text\":\"정답\"},{\"no\":2,\"text\":\"오답\"}],\"answer\":{\"correct_no\":1}}}}",ProblemItemDetailResponse.class));
 
 		// When
 		assertThat(worker.processOne()).isTrue();
@@ -205,10 +214,10 @@ class ProblemGenerationDurabilityIntegrationTest {
 	void honorsRetryAfterAsPollingAdvice() throws Exception {
 		// Given
 		var event=decoder.decode(TENANT,requestEvent()); store.register(event,UUID.randomUUID(),requestEvent(),Instant.now());
-		when(client.submit(any(),any())).thenReturn(objectMapper.readTree("{\"data\":{\"job_id\":\"wait-job\"},\"meta\":{\"execution_id\":\"wait-exec\"}}"));
+		when(client.submit(any(),any())).thenReturn(read("{\"data\":{\"job_id\":\"wait-job\"},\"meta\":{\"execution_id\":\"wait-exec\"}}",ProblemSubmissionResponse.class));
 		assertThat(worker.processOne()).isTrue(); jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '1 second'");
 		Instant before=Instant.now();
-		when(client.job(any(),any())).thenReturn(new AiProblemClient.JobResponse(objectMapper.readTree("{\"data\":{\"status\":\"queued\"}}"),Duration.ofSeconds(10)));
+		when(client.job(any(),any())).thenReturn(new AiProblemClient.JobResponse(read("{\"data\":{\"status\":\"queued\"}}",ProblemJobResponse.class),Duration.ofSeconds(10)));
 
 		// When
 		assertThat(worker.processOne()).isTrue();
@@ -261,6 +270,43 @@ class ProblemGenerationDurabilityIntegrationTest {
 		return jdbc.queryForObject("SELECT status FROM problem_generation_request_inbox WHERE event_id=?",
 			String.class, EVENT);
 	}
+
+	@Test
+	@DisplayName("Given 문제 출제 stale reclaim When 이전 claim이 늦게 재시도·완료하면 Then 최신 claim을 변경하지 않는다")
+	void fencesSupersededProblemClaim() {
+		// Given
+		var event=decoder.decode(TENANT,requestEvent());Instant now=Instant.parse("2026-08-13T00:00:00Z");
+		store.register(event,UUID.randomUUID(),requestEvent(),now);
+		var old=store.claimNext(now,Duration.ofSeconds(30)).orElseThrow();
+		var current=store.claimNext(now.plusSeconds(31),Duration.ofSeconds(30)).orElseThrow();
+		// When/Then
+		org.assertj.core.api.Assertions.assertThatThrownBy(()->store.markRetry(old.eventId(),old.claimVersion(),now.plusSeconds(60),"LATE",now.plusSeconds(32)))
+			.isInstanceOf(IllegalStateException.class);
+		org.assertj.core.api.Assertions.assertThatThrownBy(()->store.saveOutcome(old.eventId(),old.claimVersion(),UUID.randomUUID(),"topic",TENANT,"{}",now.plusSeconds(32)))
+			.isInstanceOf(IllegalStateException.class);
+		assertThat(current.claimVersion()).isGreaterThan(old.claimVersion());
+		assertThat(inboxStatus()).isEqualTo("PROCESSING");
+		assertThat(count("problem_generation_outbox")).isZero();
+	}
+
+	@Test
+	@DisplayName("Given 문제 출제 Outbox stale reclaim When 이전 publisher가 늦게 ack하면 Then 최신 claim을 유지한다")
+	void fencesSupersededProblemOutboxClaim() {
+		// Given
+		var event=decoder.decode(TENANT,requestEvent());Instant now=Instant.parse("2026-08-13T00:00:00Z");
+		store.register(event,UUID.randomUUID(),requestEvent(),now);
+		var request=store.claimNext(now,Duration.ofSeconds(30)).orElseThrow();
+		store.saveOutcome(request.eventId(),request.claimVersion(),UUID.randomUUID(),"topic",TENANT,"{}",now);
+		var old=store.claimOutbox(now,Duration.ofSeconds(30)).orElseThrow();
+		var current=store.claimOutbox(now.plusSeconds(31),Duration.ofSeconds(30)).orElseThrow();
+		// When/Then
+		org.assertj.core.api.Assertions.assertThatThrownBy(()->store.outboxPublished(old.eventId(),old.sourceEventId(),old.claimVersion(),now.plusSeconds(32)))
+			.isInstanceOf(IllegalStateException.class);
+		assertThat(current.claimVersion()).isGreaterThan(old.claimVersion());
+		assertThat(jdbc.queryForObject("SELECT status FROM problem_generation_outbox",String.class)).isEqualTo("PUBLISHING");
+	}
+
+	private <T> T read(String json,Class<T> type) throws Exception { return objectMapper.readValue(json,type); }
 
 	private int count(String table) {
 		return jdbc.queryForObject("SELECT count(*) FROM " + table, Integer.class);

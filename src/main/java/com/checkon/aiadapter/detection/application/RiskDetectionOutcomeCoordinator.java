@@ -19,6 +19,7 @@ import com.checkon.aiadapter.detection.kafka.RiskDetectionRequestedEvent;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
+import com.checkon.aiadapter.common.observability.DurabilityMetrics;
 
 @Service
 @ConditionalOnProperty(
@@ -55,31 +56,34 @@ public class RiskDetectionOutcomeCoordinator {
 	}
 
 	@Transactional
-	public void complete(RiskDetectionRequestedEvent request, AiDetectionResponse response) {
+	public void complete(RiskDetectionRequestedEvent request, long claimVersion, AiDetectionResponse response) {
 		responseValidator.validate(request.payload(), response);
-		storeOutcome(request, RiskDetectionOutcomeEvent.COMPLETED,
+		storeOutcome(request, claimVersion, RiskDetectionOutcomeEvent.COMPLETED,
 			kafkaProperties.completedTopic(), response);
 	}
 
 	@Transactional
 	public void fail(
 		RiskDetectionRequestedEvent request,
+		long claimVersion,
 		String code,
 		String message,
 		Object detail
 	) {
-		storeOutcome(request, RiskDetectionOutcomeEvent.FAILED,
+		storeOutcome(request, claimVersion, RiskDetectionOutcomeEvent.FAILED,
 			kafkaProperties.failedTopic(),
 			new AiDetectionFailure(code, message, detail, false));
 	}
 
 	@Transactional
-	public void retry(UUID eventId, Instant nextAttemptAt, String errorCode) {
-		inboxRepository.markRetry(eventId, nextAttemptAt, errorCode, Instant.now(clock));
+	public void retry(UUID eventId, long claimVersion, Instant nextAttemptAt, String errorCode) {
+		inboxRepository.markRetry(eventId, claimVersion, nextAttemptAt, errorCode, Instant.now(clock));
+		DurabilityMetrics.transition("risk_detection","retry");
 	}
 
 	private void storeOutcome(
 		RiskDetectionRequestedEvent request,
+		long claimVersion,
 		String eventType,
 		String topic,
 		Object payload
@@ -96,7 +100,10 @@ public class RiskDetectionOutcomeCoordinator {
 			outcomeEventId, request.eventId(), topic, request.tenantAlias(),
 			write(outcome), now
 		));
-		inboxRepository.markOutcomePending(request.eventId(), now);
+		inboxRepository.markOutcomePending(request.eventId(), claimVersion,
+			eventType.equals(RiskDetectionOutcomeEvent.COMPLETED) ? "SUCCEEDED" : "FAILED",
+			eventType.equals(RiskDetectionOutcomeEvent.COMPLETED) ? null : "AI_FAILED", now);
+		DurabilityMetrics.transition("risk_detection",eventType.equals(RiskDetectionOutcomeEvent.COMPLETED)?"success":"failure");
 	}
 
 	private String write(RiskDetectionOutcomeEvent<Object> event) {

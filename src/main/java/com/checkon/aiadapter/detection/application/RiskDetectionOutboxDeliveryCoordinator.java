@@ -30,24 +30,25 @@ public class RiskDetectionOutboxDeliveryCoordinator {
 	}
 
 	@Transactional
-	public void published(UUID outboxEventId, UUID sourceEventId, Instant now) {
-		outboxRepository.markPublished(outboxEventId, now);
+	public void published(UUID outboxEventId, UUID sourceEventId, long claimVersion, Instant now) {
+		outboxRepository.markPublished(outboxEventId, claimVersion, now);
 		inboxRepository.markOutcomePublished(sourceEventId, now);
 	}
 
 	@Transactional
-	public void retry(UUID outboxEventId, Instant availableAt, String errorCode) {
-		outboxRepository.markRetry(outboxEventId, availableAt, errorCode);
+	public void retry(UUID outboxEventId, long claimVersion, Instant availableAt, String errorCode) {
+		outboxRepository.markRetry(outboxEventId, claimVersion, availableAt, errorCode);
 	}
 
 	@Transactional
 	public void dead(
 		UUID outboxEventId,
 		UUID sourceEventId,
+		long claimVersion,
 		String errorCode,
 		Instant now
 	) {
-		outboxRepository.markDead(outboxEventId, errorCode);
+		outboxRepository.markDead(outboxEventId, claimVersion, errorCode);
 		inboxRepository.markOutcomeDead(sourceEventId, errorCode, now);
 	}
 }

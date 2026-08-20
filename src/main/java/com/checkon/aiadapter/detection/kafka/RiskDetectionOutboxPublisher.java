@@ -2,14 +2,15 @@ package com.checkon.aiadapter.detection.kafka;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.concurrent.TimeUnit;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import com.checkon.aiadapter.common.kafka.RiskDetectionKafkaProperties;
+import com.checkon.aiadapter.common.durability.OutboxPublicationService;
+import com.checkon.aiadapter.common.durability.OutboxPublicationService.Message;
+import com.checkon.aiadapter.common.durability.OutboxPublicationService.Transitions;
 import com.checkon.aiadapter.detection.application.RiskDetectionOutboxDeliveryCoordinator;
 import com.checkon.aiadapter.detection.infrastructure.persistence.RiskDetectionOutboxRepository;
 import com.checkon.aiadapter.detection.infrastructure.persistence.RiskDetectionOutboxRepository.ClaimedOutboxEvent;
@@ -23,27 +24,27 @@ public class RiskDetectionOutboxPublisher {
 
 	private final RiskDetectionOutboxRepository outboxRepository;
 	private final RiskDetectionOutboxDeliveryCoordinator deliveryCoordinator;
-	private final KafkaTemplate<String, String> kafkaTemplate;
+	private final OutboxPublicationService publicationService;
 	private final RiskDetectionKafkaProperties properties;
 	private final Clock clock;
 
 	public RiskDetectionOutboxPublisher(
 		RiskDetectionOutboxRepository outboxRepository,
 		RiskDetectionOutboxDeliveryCoordinator deliveryCoordinator,
-		KafkaTemplate<String, String> kafkaTemplate,
+		OutboxPublicationService publicationService,
 		RiskDetectionKafkaProperties properties,
 		Clock clock
 	) {
 		this.outboxRepository = outboxRepository;
 		this.deliveryCoordinator = deliveryCoordinator;
-		this.kafkaTemplate = kafkaTemplate;
+		this.publicationService = publicationService;
 		this.properties = properties;
 		this.clock = clock;
 	}
 
 	@Scheduled(
 		fixedDelayString = "${checkon.kafka.risk-detection.outbox-poll-delay}",
-		initialDelayString = "${checkon.kafka.risk-detection.outbox-poll-delay}"
+		initialDelayString = "${checkon.kafka.risk-detection.outbox-poll-delay}", scheduler = "outboxPublisherScheduler"
 	)
 	public void poll() {
 		publishOne();
@@ -57,25 +58,19 @@ public class RiskDetectionOutboxPublisher {
 	}
 
 	private boolean publish(ClaimedOutboxEvent event) {
-		try {
-			kafkaTemplate.send(
-				event.topic(), event.messageKey(), event.eventPayload())
-				.get(properties.producerSendTimeout().toMillis(), TimeUnit.MILLISECONDS);
-			deliveryCoordinator.published(
-				event.eventId(), event.sourceEventId(), Instant.now(clock));
-		}
-		catch (Exception exception) {
-			String errorCode = "KAFKA_PUBLISH_FAILED";
-			if (event.publishAttempt() >= properties.outboxMaxAttempts()) {
-				deliveryCoordinator.dead(
-					event.eventId(), event.sourceEventId(), errorCode, Instant.now(clock));
-			}
-			else {
-				deliveryCoordinator.retry(
-					event.eventId(), Instant.now(clock).plus(properties.outboxRetryDelay()),
-					errorCode);
-			}
-		}
-		return true;
+		return publicationService.publish("risk_detection",
+			new Message(event.topic(), event.messageKey(), event.eventPayload(), event.publishAttempt()),
+			properties.outboxMaxAttempts(), properties.outboxRetryDelay(), properties.producerSendTimeout(),
+			new Transitions() {
+				@Override public void published(Instant now) {
+					deliveryCoordinator.published(event.eventId(), event.sourceEventId(), event.claimVersion(), now);
+				}
+				@Override public void retry(Instant availableAt, String errorCode, Instant now) {
+					deliveryCoordinator.retry(event.eventId(), event.claimVersion(), availableAt, errorCode);
+				}
+				@Override public void dead(String errorCode, Instant now) {
+					deliveryCoordinator.dead(event.eventId(), event.sourceEventId(), event.claimVersion(), errorCode, now);
+				}
+			});
 	}
 }

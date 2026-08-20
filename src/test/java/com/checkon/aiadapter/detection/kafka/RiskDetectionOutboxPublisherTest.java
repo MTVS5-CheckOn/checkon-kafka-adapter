@@ -21,6 +21,7 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 
 import com.checkon.aiadapter.common.kafka.RiskDetectionKafkaProperties;
+import com.checkon.aiadapter.common.durability.OutboxPublicationService;
 import com.checkon.aiadapter.detection.application.RiskDetectionOutboxDeliveryCoordinator;
 import com.checkon.aiadapter.detection.infrastructure.persistence.RiskDetectionOutboxRepository;
 import com.checkon.aiadapter.detection.infrastructure.persistence.RiskDetectionOutboxRepository.ClaimedOutboxEvent;
@@ -55,7 +56,7 @@ class RiskDetectionOutboxPublisherTest {
 	@BeforeEach
 	void setUp() {
 		publisher = new RiskDetectionOutboxPublisher(
-			repository, coordinator, kafkaTemplate, properties, clock);
+			repository, coordinator, new OutboxPublicationService(kafkaTemplate, clock), properties, clock);
 	}
 
 	@Test
@@ -73,7 +74,7 @@ class RiskDetectionOutboxPublisherTest {
 
 		// Then
 		assertThat(processed).isTrue();
-		verify(coordinator).published(OUTBOX_ID, SOURCE_ID, NOW);
+		verify(coordinator).published(OUTBOX_ID, SOURCE_ID, 1, NOW);
 	}
 
 	@Test
@@ -93,9 +94,10 @@ class RiskDetectionOutboxPublisherTest {
 
 		// Then
 		verify(coordinator).retry(
-			OUTBOX_ID, NOW.plusSeconds(5), "KAFKA_PUBLISH_FAILED");
+			OUTBOX_ID, 1, NOW.plusSeconds(5), "KAFKA_PUBLISH_FAILED");
 		verify(coordinator, never()).dead(
 			org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+			org.mockito.ArgumentMatchers.anyLong(),
 			org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
 	}
 
@@ -116,12 +118,12 @@ class RiskDetectionOutboxPublisherTest {
 
 		// Then
 		verify(coordinator).dead(
-			OUTBOX_ID, SOURCE_ID, "KAFKA_PUBLISH_FAILED", NOW);
+			OUTBOX_ID, SOURCE_ID, 1, "KAFKA_PUBLISH_FAILED", NOW);
 	}
 
 	private ClaimedOutboxEvent event(int attempt) {
 		return new ClaimedOutboxEvent(
 			OUTBOX_ID, SOURCE_ID, "checkon.risk-detection.completed.v1",
-			"tn_0123456789abcdef0123456789abcdef", "{}", attempt);
+			"tn_0123456789abcdef0123456789abcdef", "{}", attempt, 1, false);
 	}
 }

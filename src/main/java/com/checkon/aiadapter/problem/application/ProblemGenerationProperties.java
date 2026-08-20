@@ -32,7 +32,7 @@ public record ProblemGenerationProperties(
 	}
 
 	public Duration retryDelayAfter(int attempts) {
-		return retryInitialDelay.multipliedBy(1L << Math.min(Math.max(attempts - 1, 0), 6));
+		return com.checkon.aiadapter.common.durability.RetryPolicy.exponential(retryInitialDelay,attempts);
 	}
 
 	private static Duration positive(Duration value, String name) {

@@ -17,14 +17,13 @@ public record RiskDetectionProcessingProperties(
 		pollDelay = positive(pollDelay, "pollDelay");
 		lockTimeout = positive(lockTimeout, "lockTimeout");
 		retryInitialDelay = positive(retryInitialDelay, "retryInitialDelay");
-		if (maxAttempts < 1) {
-			throw new IllegalArgumentException("maxAttempts must be at least 1");
+		if (maxAttempts < 1 || maxAttempts > 20) {
+			throw new IllegalArgumentException("maxAttempts must be 1..20");
 		}
 	}
 
 	public Duration retryDelayAfter(int completedAttempts) {
-		long multiplier = 1L << Math.min(Math.max(completedAttempts - 1, 0), 20);
-		return retryInitialDelay.multipliedBy(multiplier);
+		return com.checkon.aiadapter.common.durability.RetryPolicy.exponential(retryInitialDelay,completedAttempts);
 	}
 
 	private static Duration positive(Duration value, String name) {
