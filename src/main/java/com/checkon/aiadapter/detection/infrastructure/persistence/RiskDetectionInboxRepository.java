@@ -10,8 +10,11 @@ import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.checkon.aiadapter.detection.kafka.RiskDetectionRequestedEvent;
+import com.checkon.aiadapter.common.kafka.UuidV7Generator;
+import com.checkon.aiadapter.common.observability.DurabilityMetrics;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -27,10 +30,13 @@ public class RiskDetectionInboxRepository {
 
 	private final JdbcTemplate jdbcTemplate;
 	private final ObjectMapper objectMapper;
+	private final UuidV7Generator idGenerator;
 
-	public RiskDetectionInboxRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+	public RiskDetectionInboxRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper,
+		UuidV7Generator idGenerator) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.objectMapper = objectMapper;
+		this.idGenerator = idGenerator;
 	}
 
 	public Registration register(RiskDetectionRequestedEvent event, Instant now) {
@@ -67,11 +73,13 @@ public class RiskDetectionInboxRepository {
 		return sameJson(existing, payload) ? Registration.DUPLICATE : Registration.CONFLICT;
 	}
 
+	@Transactional
 	public Optional<ClaimedRequest> claimNext(Instant now, Duration lockTimeout) {
 		Instant staleBefore = now.minus(lockTimeout);
+		UUID attemptId = idGenerator.next();
 		List<ClaimedRequest> claimed = jdbcTemplate.query("""
 			WITH candidate AS (
-			    SELECT event_id
+			    SELECT event_id, status = 'PROCESSING' AS stale_reclaim
 			    FROM risk_detection_request_inbox
 			    WHERE (
 			        status IN ('RECEIVED', 'RETRY_PENDING')
@@ -83,39 +91,64 @@ public class RiskDetectionInboxRepository {
 			    ORDER BY next_attempt_at, created_at
 			    FOR UPDATE SKIP LOCKED
 			    LIMIT 1
-			)
+			), updated AS (
 			UPDATE risk_detection_request_inbox inbox
 			SET status = 'PROCESSING',
 			    http_attempts = http_attempts + 1,
+			    claim_version = claim_version + 1,
 			    locked_at = ?,
 			    updated_at = ?
 			FROM candidate
 			WHERE inbox.event_id = candidate.event_id
-			RETURNING inbox.event_payload::text, inbox.http_attempts
+			RETURNING inbox.event_id, inbox.event_payload::text, inbox.http_attempts,
+			          inbox.claim_version, candidate.stale_reclaim
+			), attempt AS (
+			INSERT INTO risk_detection_attempt
+			(attempt_id, source_event_id, phase, claim_version, started_at, stale_reclaim)
+			SELECT ?, event_id, 'AI_HTTP', claim_version, ?, stale_reclaim FROM updated
+			)
+			SELECT event_payload, http_attempts, claim_version, stale_reclaim FROM updated
 			""",
 			(resultSet, rowNumber) -> claimedRequest(
-				resultSet.getString(1), resultSet.getInt(2)),
+				resultSet.getString(1), resultSet.getInt(2), resultSet.getLong(3),
+				resultSet.getBoolean(4)),
 			Timestamp.from(now), Timestamp.from(staleBefore),
-			Timestamp.from(now), Timestamp.from(now)
+			Timestamp.from(now), Timestamp.from(now), attemptId, Timestamp.from(now)
 		);
+		claimed.stream().filter(ClaimedRequest::staleReclaim).findFirst().ifPresent(request ->
+			{ DurabilityMetrics.staleReclaim("risk_detection","inbox"); jdbcTemplate.update("""
+				UPDATE risk_detection_attempt SET finished_at=?, result_status='SUPERSEDED', superseded=TRUE
+				WHERE source_event_id=? AND claim_version<? AND finished_at IS NULL
+				""", Timestamp.from(now), request.event().eventId(), request.claimVersion()); });
 		return claimed.stream().findFirst();
 	}
 
-	public void markRetry(UUID eventId, Instant nextAttemptAt, String errorCode, Instant now) {
+	public void markRetry(UUID eventId, long claimVersion, Instant nextAttemptAt, String errorCode, Instant now) {
 		requireUpdated(jdbcTemplate.update("""
 			UPDATE risk_detection_request_inbox
 			SET status = 'RETRY_PENDING', next_attempt_at = ?, locked_at = NULL,
 			    last_error_code = ?, updated_at = ?
-			WHERE event_id = ? AND status = 'PROCESSING'
-			""", Timestamp.from(nextAttemptAt), errorCode, Timestamp.from(now), eventId), eventId);
+			WHERE event_id = ? AND status = 'PROCESSING' AND claim_version = ?
+			""", Timestamp.from(nextAttemptAt), errorCode, Timestamp.from(now), eventId, claimVersion), eventId);
+		finishAttempt(eventId, claimVersion, "RETRY", errorCode, now);
 	}
 
-	public void markOutcomePending(UUID eventId, Instant now) {
+	public void markOutcomePending(UUID eventId, long claimVersion, String resultStatus, String errorCode, Instant now) {
 		requireUpdated(jdbcTemplate.update("""
 			UPDATE risk_detection_request_inbox
 			SET status = 'OUTCOME_PENDING', locked_at = NULL, updated_at = ?
-			WHERE event_id = ? AND status = 'PROCESSING'
-			""", Timestamp.from(now), eventId), eventId);
+			WHERE event_id = ? AND status = 'PROCESSING' AND claim_version = ?
+			""", Timestamp.from(now), eventId, claimVersion), eventId);
+		finishAttempt(eventId, claimVersion, resultStatus, errorCode, now);
+	}
+
+	private void finishAttempt(UUID eventId, long claimVersion, String resultStatus,
+		String errorCode, Instant now) {
+		requireUpdated(jdbcTemplate.update("""
+			UPDATE risk_detection_attempt
+			SET finished_at = ?, result_status = ?, error_code = ?
+			WHERE source_event_id = ? AND claim_version = ? AND finished_at IS NULL
+			""", Timestamp.from(now), resultStatus, errorCode, eventId, claimVersion), eventId);
 	}
 
 	public void markOutcomePublished(UUID eventId, Instant now) {
@@ -136,6 +169,7 @@ public class RiskDetectionInboxRepository {
 
 	private void requireUpdated(int updated, UUID eventId) {
 		if (updated != 1) {
+			DurabilityMetrics.fencingRejected("risk_detection","inbox");
 			throw new IllegalStateException("Inbox request is not PROCESSING: " + eventId);
 		}
 	}
@@ -164,7 +198,8 @@ public class RiskDetectionInboxRepository {
 		}
 	}
 
-	private ClaimedRequest claimedRequest(String eventPayload, int httpAttempt) {
+	private ClaimedRequest claimedRequest(String eventPayload, int httpAttempt,
+		long claimVersion, boolean staleReclaim) {
 		try {
 			JsonNode root = objectMapper.readTree(eventPayload);
 			JsonNode aiPayload = root.get("payload");
@@ -174,7 +209,7 @@ public class RiskDetectionInboxRepository {
 			return new ClaimedRequest(
 				objectMapper.treeToValue(root, RiskDetectionRequestedEvent.class),
 				objectMapper.writeValueAsString(aiPayload),
-				httpAttempt
+				httpAttempt, claimVersion, staleReclaim
 			);
 		}
 		catch (JacksonException exception) {
@@ -215,7 +250,9 @@ public class RiskDetectionInboxRepository {
 	public record ClaimedRequest(
 		RiskDetectionRequestedEvent event,
 		String requestBody,
-		int httpAttempt
+		int httpAttempt,
+		long claimVersion,
+		boolean staleReclaim
 	) {
 	}
 }

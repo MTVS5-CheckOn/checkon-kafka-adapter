@@ -6,6 +6,8 @@ import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
+import io.micrometer.core.instrument.Metrics;
+import io.micrometer.core.instrument.Timer;
 
 public class HttpAiRiskDetectionClient implements AiRiskDetectionClient {
 
@@ -48,6 +50,7 @@ public class HttpAiRiskDetectionClient implements AiRiskDetectionClient {
 		String requestBody,
 		AiDetectionRequestHeaders headers
 	) {
+		Timer.Sample sample=Timer.start(Metrics.globalRegistry);
 		try {
 			long contentLength = requestBody.getBytes(StandardCharsets.UTF_8).length;
 			AiDetectionResponse response = restClient.post()
@@ -79,5 +82,6 @@ public class HttpAiRiskDetectionClient implements AiRiskDetectionClient {
 		catch (RestClientException exception) {
 			throw AiRiskDetectionClientException.networkError(exception);
 		}
+		finally { sample.stop(Metrics.timer("checkon.ai.http.duration","feature","risk_detection","operation","detect")); }
 	}
 }

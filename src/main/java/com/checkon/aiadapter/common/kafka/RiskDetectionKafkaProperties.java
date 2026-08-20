@@ -27,8 +27,8 @@ public record RiskDetectionKafkaProperties(
 		outboxLockTimeout = positive(outboxLockTimeout, "outboxLockTimeout");
 		outboxRetryDelay = positive(outboxRetryDelay, "outboxRetryDelay");
 		producerSendTimeout = positive(producerSendTimeout, "producerSendTimeout");
-		if (outboxMaxAttempts < 1) {
-			throw new IllegalArgumentException("outboxMaxAttempts must be at least 1");
+		if (outboxMaxAttempts < 1 || outboxMaxAttempts > 100) {
+			throw new IllegalArgumentException("outboxMaxAttempts must be 1..100");
 		}
 	}
 

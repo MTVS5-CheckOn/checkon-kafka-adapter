@@ -4,7 +4,6 @@ import java.time.Clock;
 import java.time.Instant;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,14 +46,6 @@ public class RiskDetectionExecutionWorker {
 		this.clock = clock;
 	}
 
-	@Scheduled(
-		fixedDelayString = "${checkon.ai.risk-detection.poll-delay}",
-		initialDelayString = "${checkon.ai.risk-detection.poll-delay}"
-	)
-	public void poll() {
-		processOne();
-	}
-
 	public boolean processOne() {
 		Instant now = Instant.now(clock);
 		return inboxRepository.claimNext(now, properties.lockTimeout())
@@ -70,14 +61,14 @@ public class RiskDetectionExecutionWorker {
 				new AiDetectionRequestHeaders(
 					event.tenantAlias(), event.requestId(), event.idempotencyKey())
 			);
-			outcomeCoordinator.complete(event, response);
+			outcomeCoordinator.complete(event, claimed.claimVersion(), response);
 		}
 		catch (AiRiskDetectionClientException exception) {
 			handleClientFailure(claimed, exception);
 		}
 		catch (InvalidAiDetectionResponseException exception) {
 			outcomeCoordinator.fail(
-				event, "AI_RESPONSE_INVALID", "AI response contract is invalid", null);
+				event, claimed.claimVersion(), "AI_RESPONSE_INVALID", "AI response contract is invalid", null);
 		}
 		return true;
 	}
@@ -92,26 +83,12 @@ public class RiskDetectionExecutionWorker {
 			&& claimed.httpAttempt() < properties.maxAttempts()) {
 			Instant nextAttemptAt = Instant.now(clock)
 				.plus(properties.retryDelayAfter(claimed.httpAttempt()));
-			outcomeCoordinator.retry(event.eventId(), nextAttemptAt, code);
+			outcomeCoordinator.retry(event.eventId(), claimed.claimVersion(), nextAttemptAt, code);
 			return;
 		}
-		String responseBody = safeResponseBody(exception.responseBody());
-		if (responseBody != null) {
-			log.warn("AI detection request rejected: runId={}, httpStatus={}, response={}",
-				event.runId(), exception.httpStatus(), responseBody);
-		}
+		log.warn("AI detection request failed: errorCode={}, httpStatus={}", code, exception.httpStatus());
 		outcomeCoordinator.fail(
-			event, code, failureMessage(exception), responseBody);
-	}
-
-	private String safeResponseBody(String responseBody) {
-		if (responseBody == null || responseBody.isBlank()) {
-			return null;
-		}
-		String singleLine = responseBody.replace('\r', ' ').replace('\n', ' ');
-		return singleLine.length() <= 2_000
-			? singleLine
-			: singleLine.substring(0, 2_000);
+			event, claimed.claimVersion(), code, failureMessage(exception), null);
 	}
 
 	private String failureCode(AiRiskDetectionClientException exception) {

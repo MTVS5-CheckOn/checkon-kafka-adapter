@@ -27,6 +27,7 @@ import com.checkon.aiadapter.detection.ai.AiRiskDetectionClient;
 import com.checkon.aiadapter.detection.ai.AiDetectionResponse;
 import com.checkon.aiadapter.detection.application.InvalidAiDetectionResponseException;
 import com.checkon.aiadapter.detection.application.RiskDetectionOutcomeCoordinator;
+import com.checkon.aiadapter.detection.application.RiskDetectionOutboxDeliveryCoordinator;
 import com.checkon.aiadapter.detection.kafka.RiskDetectionRequestedEvent;
 
 import tools.jackson.databind.ObjectMapper;
@@ -34,8 +35,17 @@ import tools.jackson.databind.ObjectMapper;
 @Testcontainers
 @SpringBootTest(properties = {
 	"checkon.ai.risk-detection.worker-enabled=true",
+	"checkon.ai.risk-detection.enabled=true",
+	"checkon.ai.risk-detection.base-url=http://localhost:1",
+	"checkon.ai.risk-detection.detect-path=/v1/detect",
+	"checkon.ai.risk-detection.connect-timeout=1s",
+	"checkon.ai.risk-detection.read-timeout=2s",
+	"checkon.ai.risk-detection.lock-timeout=30s",
 	"checkon.ai.risk-detection.poll-delay=1h",
-	"checkon.kafka.risk-detection.enabled=false"
+	"checkon.ai.risk-detection.scheduler-enabled=false",
+	"checkon.kafka.risk-detection.enabled=true",
+	"checkon.kafka.risk-detection.outbox-poll-delay=1h",
+	"spring.kafka.listener.auto-startup=false"
 })
 class RiskDetectionDurabilityIntegrationTest {
 
@@ -59,6 +69,9 @@ class RiskDetectionDurabilityIntegrationTest {
 	RiskDetectionOutboxRepository outboxRepository;
 
 	@Autowired
+	RiskDetectionOutboxDeliveryCoordinator deliveryCoordinator;
+
+	@Autowired
 	JdbcTemplate jdbcTemplate;
 
 	@Autowired
@@ -75,7 +88,9 @@ class RiskDetectionDurabilityIntegrationTest {
 
 	@BeforeEach
 	void setUp() throws Exception {
+		jdbcTemplate.update("DELETE FROM outbox_publish_attempt WHERE worker_kind='risk_detection'");
 		jdbcTemplate.update("DELETE FROM risk_detection_outbox");
+		jdbcTemplate.update("DELETE FROM risk_detection_attempt");
 		jdbcTemplate.update("DELETE FROM risk_detection_request_inbox");
 		event = objectMapper.readValue(readFixture(), RiskDetectionRequestedEvent.class);
 		now = Instant.parse("2026-08-12T00:00:00Z");
@@ -153,13 +168,50 @@ class RiskDetectionDurabilityIntegrationTest {
 	}
 
 	@Test
+	@DisplayName("Given stale reclaim 뒤 이전 claim When 늦은 성공·실패·재시도를 반영하면 Then 최신 claim을 변경하지 않는다")
+	void rejectsLateTransitionsFromSupersededClaim() {
+		// Given
+		inboxRepository.register(event, now);
+		var oldClaim=inboxRepository.claimNext(now,Duration.ofSeconds(30)).orElseThrow();
+		var currentClaim=inboxRepository.claimNext(now.plusSeconds(31),Duration.ofSeconds(30)).orElseThrow();
+		// When/Then
+		assertThat(currentClaim.claimVersion()).isGreaterThan(oldClaim.claimVersion());
+		org.assertj.core.api.Assertions.assertThatThrownBy(()->outcomeCoordinator.complete(event,oldClaim.claimVersion(),validResponse()))
+			.isInstanceOf(IllegalStateException.class);
+		org.assertj.core.api.Assertions.assertThatThrownBy(()->outcomeCoordinator.fail(event,oldClaim.claimVersion(),"LATE","late",null))
+			.isInstanceOf(IllegalStateException.class);
+		org.assertj.core.api.Assertions.assertThatThrownBy(()->inboxRepository.markRetry(event.eventId(),oldClaim.claimVersion(),now.plusSeconds(60),"LATE",now.plusSeconds(32)))
+			.isInstanceOf(IllegalStateException.class);
+		assertThat(inboxStatus()).isEqualTo("PROCESSING");
+		assertThat(rowCount("risk_detection_outbox")).isZero();
+		assertThat(jdbcTemplate.queryForObject("SELECT count(*) FROM risk_detection_attempt WHERE superseded",Integer.class)).isEqualTo(1);
+	}
+
+	@Test
+	@DisplayName("Given Outbox stale reclaim When 이전 publisher가 늦게 ack하면 Then 최신 publishing claim을 변경하지 않는다")
+	void rejectsLateOutboxAcknowledgement() {
+		// Given
+		inboxRepository.register(event,now);
+		var request=inboxRepository.claimNext(now,Duration.ofSeconds(30)).orElseThrow();
+		outcomeCoordinator.complete(event,request.claimVersion(),validResponse());
+		Instant available=jdbcTemplate.queryForObject("SELECT available_at FROM risk_detection_outbox",java.sql.Timestamp.class).toInstant();
+		var old=outboxRepository.claimNext(available,Duration.ofSeconds(30)).orElseThrow();
+		var current=outboxRepository.claimNext(available.plusSeconds(31),Duration.ofSeconds(30)).orElseThrow();
+		// When/Then
+		org.assertj.core.api.Assertions.assertThatThrownBy(()->deliveryCoordinator.published(old.eventId(),old.sourceEventId(),old.claimVersion(),now.plusSeconds(32)))
+			.isInstanceOf(IllegalStateException.class);
+		assertThat(current.claimVersion()).isGreaterThan(old.claimVersion());
+		assertThat(jdbcTemplate.queryForObject("SELECT status FROM risk_detection_outbox",String.class)).isEqualTo("PUBLISHING");
+	}
+
+	@Test
 	@DisplayName("Given 일시적 HTTP 실패 When 재시각 전후에 claim하면 Then 예정 시각 이후에만 재시도한다")
 	void waitsUntilConfiguredRetryTime() {
 		// Given
 		inboxRepository.register(event, now);
-		inboxRepository.claimNext(now, Duration.ofSeconds(30));
+		var claim = inboxRepository.claimNext(now, Duration.ofSeconds(30)).orElseThrow();
 		inboxRepository.markRetry(
-			event.eventId(), now.plusSeconds(2), "AI_HTTP_503", now);
+			event.eventId(), claim.claimVersion(), now.plusSeconds(2), "AI_HTTP_503", now);
 
 		// When/Then
 		assertThat(inboxRepository.claimNext(
@@ -195,11 +247,11 @@ class RiskDetectionDurabilityIntegrationTest {
 	void storesCompletedOutcomeAtomically() {
 		// Given
 		inboxRepository.register(event, now);
-		inboxRepository.claimNext(now, Duration.ofSeconds(30));
+		var claim = inboxRepository.claimNext(now, Duration.ofSeconds(30)).orElseThrow();
 		AiDetectionResponse response = validResponse();
 
 		// When
-		outcomeCoordinator.complete(event, response);
+		outcomeCoordinator.complete(event, claim.claimVersion(), response);
 
 		// Then
 		assertThat(inboxStatus()).isEqualTo("OUTCOME_PENDING");
@@ -218,13 +270,13 @@ class RiskDetectionDurabilityIntegrationTest {
 	void rollsBackInvalidAiResponse() {
 		// Given
 		inboxRepository.register(event, now);
-		inboxRepository.claimNext(now, Duration.ofSeconds(30));
+		var claim = inboxRepository.claimNext(now, Duration.ofSeconds(30)).orElseThrow();
 		AiDetectionResponse invalid = responseForStudent(
 			"st_ffffffffffffffffffffffffffffffff");
 
 		// When/Then
 		org.assertj.core.api.Assertions.assertThatThrownBy(
-			() -> outcomeCoordinator.complete(event, invalid))
+			() -> outcomeCoordinator.complete(event, claim.claimVersion(), invalid))
 			.isInstanceOf(InvalidAiDetectionResponseException.class);
 		assertThat(inboxStatus()).isEqualTo("PROCESSING");
 		assertThat(rowCount("risk_detection_outbox")).isZero();

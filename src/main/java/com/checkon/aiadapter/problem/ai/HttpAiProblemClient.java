@@ -10,6 +10,8 @@ import org.springframework.web.client.RestClientResponseException;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.Metrics;
+import io.micrometer.core.instrument.Timer;
 
 public class HttpAiProblemClient implements AiProblemClient {
 	private final RestClient restClient;
@@ -23,36 +25,38 @@ public class HttpAiProblemClient implements AiProblemClient {
 	}
 
 	@Override
-	public JsonNode submit(String requestBody, Headers headers) {
-		return exchange(() -> restClient.post().uri(path)
+	public ProblemSubmissionResponse submit(String requestBody, Headers headers) {
+		return exchange("submit",() -> restClient.post().uri(path)
 			.headers(http -> headers(http, headers, true))
 			.contentType(MediaType.APPLICATION_JSON)
 			.contentLength(requestBody.getBytes(StandardCharsets.UTF_8).length)
-			.body(requestBody).retrieve().body(JsonNode.class));
+			.body(requestBody).retrieve().body(ProblemSubmissionResponse.class));
 	}
 
 	@Override
 	public JobResponse job(String jobId, Headers headers) {
+		Timer.Sample sample=Timer.start(Metrics.globalRegistry);
 		try {
 			var response=restClient.get().uri(path + "/{jobId}", jobId)
-				.headers(http -> headers(http, headers, false)).retrieve().toEntity(JsonNode.class);
-			JsonNode body=validate(response.getBody());
+				.headers(http -> headers(http, headers, false)).retrieve().toEntity(ProblemJobResponse.class);
+			ProblemJobResponse body=validate(response.getBody());
 			return new JobResponse(body,retryAfter(response.getHeaders().getFirst("Retry-After")));
 		}
 		catch (RestClientResponseException exception) { throw translated(exception); }
 		catch (RestClientException exception) { throw new AiProblemClientException("AI_NETWORK_ERROR",true,exception); }
+		finally { sample.stop(Metrics.timer("checkon.ai.http.duration","feature","problem_generation","operation","job")); }
 	}
 
 	@Override
-	public JsonNode items(String setId, Headers headers) {
-		return exchange(() -> restClient.get().uri(path + "/{setId}/items", setId)
-			.headers(http -> headers(http, headers, false)).retrieve().body(JsonNode.class));
+	public ProblemItemSetResponse items(String setId, Headers headers) {
+		return exchange("items",() -> restClient.get().uri(path + "/{setId}/items", setId)
+			.headers(http -> headers(http, headers, false)).retrieve().body(ProblemItemSetResponse.class));
 	}
 
 	@Override
-	public JsonNode item(String setId,int slotIndex,Headers headers) {
-		return exchange(() -> restClient.get().uri(path+"/{setId}/items/{slotIndex}",setId,slotIndex)
-			.headers(http->headers(http,headers,false)).retrieve().body(JsonNode.class));
+	public ProblemItemDetailResponse item(String setId,int slotIndex,Headers headers) {
+		return exchange("item",() -> restClient.get().uri(path+"/{setId}/items/{slotIndex}",setId,slotIndex)
+			.headers(http->headers(http,headers,false)).retrieve().body(ProblemItemDetailResponse.class));
 	}
 
 	private static void headers(org.springframework.http.HttpHeaders http, Headers value, boolean idempotent) {
@@ -61,9 +65,10 @@ public class HttpAiProblemClient implements AiProblemClient {
 		if (idempotent) http.set("Idempotency-Key", value.idempotencyKey());
 	}
 
-	private JsonNode exchange(java.util.concurrent.Callable<JsonNode> call) {
+	private <T> T exchange(String operation,java.util.concurrent.Callable<T> call) {
+		Timer.Sample sample=Timer.start(Metrics.globalRegistry);
 		try {
-			JsonNode response = call.call();
+			T response = call.call();
 			return validate(response);
 		}
 		catch (AiProblemClientException exception) { throw exception; }
@@ -76,8 +81,9 @@ public class HttpAiProblemClient implements AiProblemClient {
 		catch (Exception exception) {
 			throw new AiProblemClientException("AI_CLIENT_ERROR", false, exception);
 		}
+		finally { sample.stop(Metrics.timer("checkon.ai.http.duration","feature","problem_generation","operation",operation)); }
 	}
-	private static JsonNode validate(JsonNode response) { if(response==null||!response.isObject()) throw new AiProblemClientException("AI_EMPTY_RESPONSE",true,null); return response; }
+	private static <T> T validate(T response) { if(response==null) throw new AiProblemClientException("AI_EMPTY_RESPONSE",true,null); return response; }
 	private AiProblemClientException translated(RestClientResponseException exception) { int status=exception.getStatusCode().value();
 		return new AiProblemClientException(errorCode(status,exception.getResponseBodyAsString()),status==408||status==429||status>=500,exception); }
 	private static Duration retryAfter(String value) { if(value==null||value.isBlank()) return null;

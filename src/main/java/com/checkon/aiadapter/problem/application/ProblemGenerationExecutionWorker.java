@@ -2,24 +2,25 @@ package com.checkon.aiadapter.problem.application;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.Locale;
 import java.util.ArrayList;
 import java.util.List;
 import java.nio.charset.StandardCharsets;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import com.checkon.aiadapter.common.kafka.UuidV7Generator;
 import com.checkon.aiadapter.problem.ai.AiProblemClient;
 import com.checkon.aiadapter.problem.ai.AiProblemClient.Headers;
 import com.checkon.aiadapter.problem.ai.AiProblemClientException;
+import com.checkon.aiadapter.problem.ai.ProblemSubmissionResponse;
+import com.checkon.aiadapter.problem.ai.ProblemJobResponse;
+import com.checkon.aiadapter.problem.ai.ProblemItemSetResponse;
+import com.checkon.aiadapter.problem.ai.ProblemItemDetailResponse;
 import com.checkon.aiadapter.problem.infrastructure.ProblemGenerationStore;
 import com.checkon.aiadapter.problem.infrastructure.ProblemGenerationStore.ClaimedRequest;
 import com.checkon.aiadapter.problem.kafka.ProblemGenerationKafkaProperties;
-
-import tools.jackson.databind.JsonNode;
+import com.checkon.aiadapter.common.observability.DurabilityMetrics;
 
 @Component
 @ConditionalOnProperty(prefix = "checkon.ai.problem-generation", name = "worker-enabled", havingValue = "true")
@@ -42,10 +43,6 @@ public class ProblemGenerationExecutionWorker {
 		this.kafka = kafka; this.ids = ids; this.clock = clock;
 	}
 
-	@Scheduled(fixedDelayString = "${checkon.ai.problem-generation.poll-delay:1s}",
-		initialDelayString = "${checkon.ai.problem-generation.poll-delay:1s}")
-	public void poll() { processOne(); }
-
 	public boolean processOne() {
 		return store.claimNext(Instant.now(clock), properties.lockTimeout()).map(this::execute).orElse(false);
 	}
@@ -57,37 +54,38 @@ public class ProblemGenerationExecutionWorker {
 		Headers headers = new Headers(request.tenantAlias(), request.requestId(), request.idempotencyKey());
 		try {
 			if ("SUBMIT".equals(request.phase())) {
-				JsonNode submitted = client.submit(requestMapper.map(request.requestBody()), headers);
-				String jobId = text(submitted.path("data"), "job_id");
-				String executionId = executionId(submitted);
+				ProblemSubmissionResponse submitted = client.submit(requestMapper.map(request.requestBody()), headers);
+				String jobId = submitted.requiredJobId();
+				String executionId = submitted.canonicalExecutionId();
 				Instant now = Instant.now(clock);
-				store.markSubmitted(request.eventId(), jobId, executionId,
+				store.markSubmitted(request.eventId(), request.claimVersion(), jobId, executionId,
 					now.plus(properties.pollInterval()), now);
 				return true;
 			}
 			var jobResponse = client.job(request.aiJobId(), headers);
-			JsonNode job = jobResponse.body();
+			ProblemJobResponse job = jobResponse.body();
 			String jobId = request.aiJobId();
-			String status = text(job.path("data"), "status").toLowerCase(Locale.ROOT);
-			if (status.equals("succeeded")) {
-				String setId=text(job.path("data").path("result"),"set_id");
-				JsonNode items = client.items(setId, headers);
-				var details=new ArrayList<JsonNode>();
-				JsonNode summaries=items.path("data").get("items");
-				if(summaries==null||!summaries.isArray()) throw new IllegalArgumentException("items must be an array");
-				for(JsonNode summary:summaries) if(!summary.path("item_id").isNull())
-					details.add(client.item(setId,summary.path("slot_index").asInt(),headers));
+			ProblemJobResponse.JobStatus status = job.requiredStatus();
+			if (status == ProblemJobResponse.JobStatus.SUCCEEDED) {
+				String setId=job.requiredSetId();
+				ProblemItemSetResponse items = client.items(setId, headers);
+				var details=new ArrayList<ProblemItemDetailResponse>();
+				if(items.data()==null||items.data().items()==null) throw new IllegalArgumentException("items must be an array");
+				for(ProblemItemSetResponse.ItemSummary summary:items.data().items()) {
+					if(summary.slotIndex()==null) throw new IllegalArgumentException("slot_index is required");
+					if(summary.itemId()!=null) details.add(client.item(setId,summary.slotIndex(),headers));
+				}
 				saveSuccess(request, jobId, job, items,details);
 			}
-			else if (status.equals("failed") || status.equals("cancelled")) {
-				saveFailure(request, "AI_JOB_" + status.toUpperCase(Locale.ROOT));
+			else if (status == ProblemJobResponse.JobStatus.FAILED || status == ProblemJobResponse.JobStatus.CANCELLED) {
+				saveFailure(request, "AI_JOB_" + status.name());
 			}
 			else {
 				Instant now = Instant.now(clock);
 				java.time.Duration delay=jobResponse.retryAfter()==null?properties.pollInterval():
 					(jobResponse.retryAfter().compareTo(properties.pollInterval())>0?jobResponse.retryAfter():properties.pollInterval());
 				Instant cap=request.createdAt().plus(properties.maxElapsed());
-				Instant next=now.plus(delay); store.markWaiting(request.eventId(),next.isAfter(cap)?cap:next,now);
+				Instant next=now.plus(delay); store.markWaiting(request.eventId(),request.claimVersion(),next.isAfter(cap)?cap:next,now);
 			}
 		}
 		catch (AiProblemClientException exception) {
@@ -102,15 +100,17 @@ public class ProblemGenerationExecutionWorker {
 		return true;
 	}
 
-	private void saveSuccess(ClaimedRequest request, String jobId, JsonNode job, JsonNode items,List<JsonNode> details) {
+	private void saveSuccess(ClaimedRequest request, String jobId, ProblemJobResponse job,
+		ProblemItemSetResponse items,List<ProblemItemDetailResponse> details) {
 		Instant now = Instant.now(clock);
 		var eventId = ids.next();
 		String outcome=outcomes.succeeded(eventId, request, jobId, job, items,details, now);
 		if(outcome.getBytes(StandardCharsets.UTF_8).length>properties.maxNormalizedResultBytes()) {
 			saveFailure(request,"RESULT_TOO_LARGE"); return;
 		}
-		store.saveOutcome(request.eventId(), eventId, kafka.resultTopic(), request.tenantAlias(),
+		store.saveOutcome(request.eventId(), request.claimVersion(), eventId, kafka.resultTopic(), request.tenantAlias(),
 			outcome, now);
+		DurabilityMetrics.transition("problem_generation","success");
 	}
 
 	private void saveFailure(ClaimedRequest request, String code) {
@@ -119,32 +119,18 @@ public class ProblemGenerationExecutionWorker {
 	private void saveFailure(ClaimedRequest request,String code,String childStatus) {
 		Instant now = Instant.now(clock);
 		var eventId = ids.next();
-		store.saveOutcome(request.eventId(), eventId, kafka.resultTopic(), request.tenantAlias(),
+		store.saveOutcome(request.eventId(), request.claimVersion(), eventId, kafka.resultTopic(), request.tenantAlias(),
 			outcomes.failed(eventId, request, code,childStatus, now), now);
+		DurabilityMetrics.transition("problem_generation","failure");
 	}
 
 	private void handleFailure(ClaimedRequest request, String code, boolean transientFailure) {
 		Instant now = Instant.now(clock);
 		if (transientFailure && request.httpAttempt() < properties.maxAttempts()) {
-			store.markRetry(request.eventId(), now.plus(properties.retryDelayAfter(request.httpAttempt())), code, now);
+			store.markRetry(request.eventId(), request.claimVersion(), now.plus(properties.retryDelayAfter(request.httpAttempt())), code, now);
+			DurabilityMetrics.transition("problem_generation","retry");
 		}
 		else saveFailure(request, code);
 	}
 
-	private static String text(JsonNode node, String field) {
-		JsonNode value = node == null ? null : node.get(field);
-		if (value == null || !value.isTextual() || value.asText().isBlank()) {
-			throw new IllegalArgumentException(field + " must not be blank");
-		}
-		return value.asText();
-	}
-
-	private static String executionId(JsonNode submitted) {
-		JsonNode data = submitted.path("data");
-		JsonNode dataValue = data.get("execution_id");
-		if (dataValue != null && dataValue.isTextual() && !dataValue.asText().isBlank()) {
-			return dataValue.asText();
-		}
-		return text(submitted.path("meta"), "execution_id");
-	}
 }

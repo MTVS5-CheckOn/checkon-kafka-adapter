@@ -18,6 +18,11 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
+
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 import com.checkon.aiadapter.detection.ai.AiDetectionRequestHeaders;
 import com.checkon.aiadapter.detection.ai.AiDetectionResponse;
@@ -66,7 +71,7 @@ class RiskDetectionExecutionWorkerTest {
 	void schedulesTransientRetry() {
 		// Given
 		when(inboxRepository.claimNext(NOW, properties.lockTimeout()))
-			.thenReturn(Optional.of(new ClaimedRequest(event, requestBody, 1)));
+			.thenReturn(Optional.of(new ClaimedRequest(event, requestBody, 1, 1, false)));
 		when(aiClient.detectRaw(requestBody, headers()))
 			.thenThrow(AiRiskDetectionClientException.httpError(503, null));
 
@@ -76,9 +81,10 @@ class RiskDetectionExecutionWorkerTest {
 		// Then
 		assertThat(processed).isTrue();
 		verify(outcomeCoordinator).retry(
-			event.eventId(), NOW.plusSeconds(1), "AI_HTTP_503");
+			event.eventId(), 1, NOW.plusSeconds(1), "AI_HTTP_503");
 		verify(outcomeCoordinator, never()).fail(
 			org.mockito.ArgumentMatchers.any(),
+			org.mockito.ArgumentMatchers.anyLong(),
 			org.mockito.ArgumentMatchers.any(),
 			org.mockito.ArgumentMatchers.any(),
 			org.mockito.ArgumentMatchers.any());
@@ -89,7 +95,7 @@ class RiskDetectionExecutionWorkerTest {
 	void failsAfterRetryExhaustion() {
 		// Given
 		when(inboxRepository.claimNext(NOW, properties.lockTimeout()))
-			.thenReturn(Optional.of(new ClaimedRequest(event, requestBody, 3)));
+			.thenReturn(Optional.of(new ClaimedRequest(event, requestBody, 3, 1, false)));
 		when(aiClient.detectRaw(requestBody, headers()))
 			.thenThrow(AiRiskDetectionClientException.httpError(503, null));
 
@@ -98,12 +104,38 @@ class RiskDetectionExecutionWorkerTest {
 
 		// Then
 		verify(outcomeCoordinator).fail(
-			event, "AI_HTTP_503",
+			event, 1, "AI_HTTP_503",
 			"AI service remained unavailable after adapter retries", null);
 		verify(outcomeCoordinator, never()).retry(
 			org.mockito.ArgumentMatchers.any(),
+			org.mockito.ArgumentMatchers.anyLong(),
 			org.mockito.ArgumentMatchers.any(),
 			org.mockito.ArgumentMatchers.any());
+	}
+
+	@Test
+	@DisplayName("Given 민감한 요청 값이 포함된 AI 실패 When 로그를 남기면 Then 코드와 상태 외 식별자·payload는 노출하지 않는다")
+	void doesNotExposeSensitiveRequestValuesInFailureLog() {
+		// Given
+		Logger logger = (Logger) LoggerFactory.getLogger(RiskDetectionExecutionWorker.class);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		logger.addAppender(appender);
+		when(inboxRepository.claimNext(NOW, properties.lockTimeout()))
+			.thenReturn(Optional.of(new ClaimedRequest(event, requestBody, 3, 1, false)));
+		when(aiClient.detectRaw(requestBody, headers()))
+			.thenThrow(AiRiskDetectionClientException.httpError(503, "sensitive-response-body", null));
+
+		// When
+		worker.processOne();
+
+		// Then
+		String output = appender.list.stream().map(ILoggingEvent::getFormattedMessage)
+			.collect(java.util.stream.Collectors.joining("\n"));
+		logger.detachAppender(appender);
+		assertThat(output).contains("errorCode=AI_HTTP_503", "httpStatus=503")
+			.doesNotContain(event.eventId().toString(), event.tenantAlias(), event.requestId(),
+				"sensitive-response-body", "students", "student_ref");
 	}
 
 	@Test
@@ -112,17 +144,17 @@ class RiskDetectionExecutionWorkerTest {
 		// Given
 		AiDetectionResponse response = mock(AiDetectionResponse.class);
 		when(inboxRepository.claimNext(NOW, properties.lockTimeout()))
-			.thenReturn(Optional.of(new ClaimedRequest(event, requestBody, 1)));
+			.thenReturn(Optional.of(new ClaimedRequest(event, requestBody, 1, 1, false)));
 		when(aiClient.detectRaw(requestBody, headers())).thenReturn(response);
 		doThrow(new InvalidAiDetectionResponseException("invalid"))
-			.when(outcomeCoordinator).complete(event, response);
+			.when(outcomeCoordinator).complete(event, 1, response);
 
 		// When
 		worker.processOne();
 
 		// Then
 		verify(outcomeCoordinator).fail(
-			event, "AI_RESPONSE_INVALID", "AI response contract is invalid", null);
+			event, 1, "AI_RESPONSE_INVALID", "AI response contract is invalid", null);
 	}
 
 	private AiDetectionRequestHeaders headers() {
