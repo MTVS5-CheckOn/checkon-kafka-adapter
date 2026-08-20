@@ -67,15 +67,29 @@ checkon:
       enabled: ${AI_COUNSEL_DRAFT_ENABLED:false}
       base-url: ${AI_COUNSEL_DRAFT_BASE_URL:}
       drafts-path: ${AI_COUNSEL_DRAFT_PATH:/v1/counsel/drafts}
-      # POST runs its own job to completion inline (K=1, contract 2026-08-20):
-      # worst case 5 LLM calls x 90s = 450s, so this must stay >= 480s or a
-      # normal request gets cut client-side while the AI keeps running.
+      # AI-A 2026-08-20 타임아웃권고 실측(배포 반영됨): POST는 적재만 하고
+      # 즉시 반환하고, GET도 잡을 돌리지 않고 현재 phase만 읽는다. 콜드 터널
+      # 왕복 최악 0.93초에 약 10배 여유를 둔 10초로 낮춘다. POST/GET 모두
+      # 같은 클라이언트/타임아웃을 쓴다.
       connect-timeout: ${AI_COUNSEL_DRAFT_CONNECT_TIMEOUT:2s}
-      read-timeout: ${AI_COUNSEL_DRAFT_READ_TIMEOUT:500s}
+      read-timeout: ${AI_COUNSEL_DRAFT_READ_TIMEOUT:10s}
+      # refine은 백엔드→어댑터→AI로 그대로 중계되는 동기 LLM 호출이라 GET과
+      # 같은 예산을 쓸 수 없다(04 §1-1의 480초 유지, "일괄로 내리시면 refine이
+      # 터집니다" -- AI팀 경고). CounselDraftProxyConfiguration이 이 값으로
+      # GET과 별도의 RestClient를 만든다.
+      refine-read-timeout: ${AI_COUNSEL_DRAFT_REFINE_READ_TIMEOUT:480s}
       worker-enabled: ${AI_COUNSEL_DRAFT_WORKER_ENABLED:false}
       poll-delay: ${AI_COUNSEL_DRAFT_POLL_DELAY:1s}
+      # SUBMIT 직후 첫 폴링 간격, 그리고 GET 응답에 Retry-After가 없을 때의
+      # 폴백 간격이다. Retry-After가 있으면 그 값을 그대로 따른다(자기 상수로
+      # 덮어쓰지 않는다 -- AI팀이 명시적으로 요청한 사항).
+      poll-interval: ${AI_COUNSEL_DRAFT_AI_POLL_INTERVAL:2s}
       lock-timeout: ${AI_COUNSEL_DRAFT_LOCK_TIMEOUT:10m}
       retry-initial-delay: ${AI_COUNSEL_DRAFT_RETRY_INITIAL_DELAY:1s}
+      # AI-A 2026-08-20 타임아웃권고: 잡당 최악 상한이 450초로 실측 확인됐다.
+      # 실측 종단 지연은 20~25초 안팎이지만 최악 케이스를 조기에 포기하지
+      # 않도록 450초보다 여유 있게 둔다.
+      max-elapsed: ${AI_COUNSEL_DRAFT_MAX_ELAPSED:8m}
       max-attempts: ${AI_COUNSEL_DRAFT_MAX_ATTEMPTS:3}
   kafka:
     problem-generation:

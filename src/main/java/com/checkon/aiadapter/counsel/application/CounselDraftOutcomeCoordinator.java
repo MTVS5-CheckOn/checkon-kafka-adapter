@@ -56,11 +56,24 @@ public class CounselDraftOutcomeCoordinator {
 		this.clock = clock;
 	}
 
+	/**
+	 * {@code canonicalExecutionId} comes from the original SUBMIT (POST)
+	 * response, not necessarily {@code response.meta().executionId()} --
+	 * once a job has gone through POLL, the terminal GET's own execution_id
+	 * may differ, and POST's value is authoritative (mirrors
+	 * ProblemGenerationOutcomeFactory using {@code request.aiExecutionId()},
+	 * "POST 정본 실행 ID ... GET 값이 달라져도 POST 값을 결과에 보존한다").
+	 */
 	@Transactional
-	public void complete(CounselDraftRequestedEvent request, long claimVersion, AiCounselDraftResponse response) {
+	public void complete(
+		CounselDraftRequestedEvent request,
+		long claimVersion,
+		AiCounselDraftResponse response,
+		String canonicalExecutionId
+	) {
 		responseValidator.validate(response);
 		CounselDraftOutcome outcome = new CounselDraftOutcome(
-			response.data().jobId(), response.data().status(), response.meta().executionId());
+			response.data().jobId(), response.data().status(), canonicalExecutionId);
 		storeOutcome(request, claimVersion, CounselDraftOutcomeEvent.COMPLETED,
 			kafkaProperties.completedTopic(), outcome);
 	}

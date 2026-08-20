@@ -46,4 +46,7 @@ tasks.named('test') {
     systemProperty 'checkon.kafka.risk-detection.enabled', 'false'
     systemProperty 'checkon.ai.problem-generation.worker-enabled', 'false'
     systemProperty 'checkon.kafka.problem-generation.enabled', 'false'
+    systemProperty 'checkon.ai.counsel-draft.enabled', 'false'
+    systemProperty 'checkon.ai.counsel-draft.worker-enabled', 'false'
+    systemProperty 'checkon.kafka.counsel-draft.enabled', 'false'
 }

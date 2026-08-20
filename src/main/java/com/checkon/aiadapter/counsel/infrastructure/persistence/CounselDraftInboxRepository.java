@@ -20,7 +20,13 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-/** Mirrors {@code RiskDetectionInboxRepository} -- see that class for the durability model this implements. */
+/**
+ * Mirrors {@code RiskDetectionInboxRepository} for the durability model, and
+ * {@code ProblemGenerationStore} for the SUBMIT/POLL phase split -- the
+ * 2026-08-20 POST-계약변경 doc made counsel's real AI POST load-only (no
+ * longer runs the job inline), so a job that comes back non-terminal must be
+ * polled via GET like problem-generation's submit-then-poll model.
+ */
 @Repository
 @ConditionalOnProperty(
 	prefix = "checkon.ai.counsel-draft",
@@ -28,6 +34,9 @@ import tools.jackson.databind.ObjectMapper;
 	havingValue = "true"
 )
 public class CounselDraftInboxRepository {
+
+	private static final String SELECT_COLUMNS = """
+		event_payload::text, phase, ai_job_id, ai_execution_id, http_attempts, claim_version, created_at""";
 
 	private final JdbcTemplate jdbcTemplate;
 	private final ObjectMapper objectMapper;
@@ -45,9 +54,9 @@ public class CounselDraftInboxRepository {
 		int inserted = jdbcTemplate.update("""
 			INSERT INTO counsel_draft_request_inbox (
 			    event_id, tenant_alias, run_id, attempt_id, request_id,
-			    idempotency_key, snapshot_hash, event_payload, status,
+			    idempotency_key, snapshot_hash, event_payload, phase, status,
 			    next_attempt_at, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), 'RECEIVED', ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), 'SUBMIT', 'RECEIVED', ?, ?, ?)
 			ON CONFLICT (event_id) DO NOTHING
 			""",
 			event.eventId(), event.tenantAlias(), event.runId(), event.attemptId(),
@@ -75,7 +84,7 @@ public class CounselDraftInboxRepository {
 			    SELECT event_id, status = 'PROCESSING' AS stale_reclaim
 			    FROM counsel_draft_request_inbox
 			    WHERE (
-			        status IN ('RECEIVED', 'RETRY_PENDING')
+			        status IN ('RECEIVED', 'WAITING', 'RETRY_PENDING')
 			        AND next_attempt_at <= ?
 			    ) OR (
 			        status = 'PROCESSING'
@@ -93,18 +102,21 @@ public class CounselDraftInboxRepository {
 			    updated_at = ?
 			FROM candidate
 			WHERE inbox.event_id = candidate.event_id
-			RETURNING inbox.event_id, inbox.event_payload::text, inbox.http_attempts,
-			          inbox.claim_version, candidate.stale_reclaim
+			RETURNING inbox.event_id, """ + SELECT_COLUMNS + """
+			, candidate.stale_reclaim
 			), attempt AS (
 			INSERT INTO counsel_draft_attempt
 			(attempt_id, source_event_id, phase, claim_version, started_at, stale_reclaim)
-			SELECT ?, event_id, 'AI_HTTP', claim_version, ?, stale_reclaim FROM updated
+			SELECT ?, event_id, phase, claim_version, ?, stale_reclaim FROM updated
 			)
-			SELECT event_payload, http_attempts, claim_version, stale_reclaim FROM updated
+			SELECT """ + SELECT_COLUMNS + """
+			, stale_reclaim FROM updated
 			""",
 			(resultSet, rowNumber) -> claimedRequest(
-				resultSet.getString(1), resultSet.getInt(2), resultSet.getLong(3),
-				resultSet.getBoolean(4)),
+				resultSet.getString(1), resultSet.getString(2), resultSet.getString(3),
+				resultSet.getString(4), resultSet.getInt(5), resultSet.getLong(6),
+				resultSet.getObject(7, java.time.OffsetDateTime.class).toInstant(),
+				resultSet.getBoolean(8)),
 			Timestamp.from(now), Timestamp.from(staleBefore),
 			Timestamp.from(now), Timestamp.from(now), attemptId, Timestamp.from(now)
 		);
@@ -124,6 +136,28 @@ public class CounselDraftInboxRepository {
 			WHERE event_id = ? AND status = 'PROCESSING' AND claim_version = ?
 			""", Timestamp.from(nextAttemptAt), errorCode, Timestamp.from(now), eventId, claimVersion), eventId);
 		finishAttempt(eventId, claimVersion, "RETRY", errorCode, now);
+	}
+
+	/** SUBMIT succeeded but the job is not terminal yet -- stores the AI's job_id/execution_id and moves to phase POLL. */
+	public void markSubmitted(UUID eventId, long claimVersion, String aiJobId, String aiExecutionId,
+		Instant nextAttemptAt, Instant now) {
+		requireUpdated(jdbcTemplate.update("""
+			UPDATE counsel_draft_request_inbox
+			SET status = 'WAITING', phase = 'POLL', ai_job_id = ?, ai_execution_id = ?,
+			    next_attempt_at = ?, locked_at = NULL, last_error_code = NULL, updated_at = ?
+			WHERE event_id = ? AND status = 'PROCESSING' AND claim_version = ?
+			""", aiJobId, aiExecutionId, Timestamp.from(nextAttemptAt), Timestamp.from(now), eventId, claimVersion), eventId);
+		finishAttempt(eventId, claimVersion, "SUBMITTED", null, now);
+	}
+
+	/** POLL checked in but the job is still not terminal -- reschedules the next poll (Retry-After-driven). */
+	public void markWaiting(UUID eventId, long claimVersion, Instant nextAttemptAt, Instant now) {
+		requireUpdated(jdbcTemplate.update("""
+			UPDATE counsel_draft_request_inbox
+			SET status = 'WAITING', next_attempt_at = ?, locked_at = NULL, last_error_code = NULL, updated_at = ?
+			WHERE event_id = ? AND status = 'PROCESSING' AND phase = 'POLL' AND claim_version = ?
+			""", Timestamp.from(nextAttemptAt), Timestamp.from(now), eventId, claimVersion), eventId);
+		finishAttempt(eventId, claimVersion, "WAITING", null, now);
 	}
 
 	public void markOutcomePending(UUID eventId, long claimVersion, String resultStatus, String errorCode, Instant now) {
@@ -172,7 +206,8 @@ public class CounselDraftInboxRepository {
 		}
 	}
 
-	private ClaimedRequest claimedRequest(String eventPayload, int httpAttempt, long claimVersion, boolean staleReclaim) {
+	private ClaimedRequest claimedRequest(String eventPayload, String phase, String aiJobId, String aiExecutionId,
+		int httpAttempt, long claimVersion, Instant createdAt, boolean staleReclaim) {
 		try {
 			JsonNode root = objectMapper.readTree(eventPayload);
 			JsonNode aiPayload = root.get("payload");
@@ -182,7 +217,8 @@ public class CounselDraftInboxRepository {
 			return new ClaimedRequest(
 				objectMapper.treeToValue(root, CounselDraftRequestedEvent.class),
 				objectMapper.writeValueAsString(aiPayload),
-				httpAttempt, claimVersion, staleReclaim
+				phase, aiJobId, aiExecutionId,
+				httpAttempt, claimVersion, createdAt, staleReclaim
 			);
 		}
 		catch (JacksonException exception) {
@@ -223,8 +259,12 @@ public class CounselDraftInboxRepository {
 	public record ClaimedRequest(
 		CounselDraftRequestedEvent event,
 		String requestBody,
+		String phase,
+		String aiJobId,
+		String aiExecutionId,
 		int httpAttempt,
 		long claimVersion,
+		Instant createdAt,
 		boolean staleReclaim
 	) {
 	}
