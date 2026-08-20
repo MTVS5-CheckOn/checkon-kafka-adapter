@@ -7,12 +7,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
- * connectTimeout/readTimeout default to the counsel contract's own numbers
- * (POST runs a job to completion inline, K=1: worst case 5 LLM calls x 90s =
- * 450s, so the adapter -- which now makes this call directly instead of the
- * backend -- must allow at least 480s or a normal request gets cut client
- * side while the AI keeps running). Mirrors CheckOn-backend's own
- * checkon.ai.counsel.read-timeout default (500s) for consistency.
+ * AI-A 2026-08-20 타임아웃권고 실측(배포 반영됨): POST는 이제 적재만 하고
+ * 즉시 반환하며, GET도 잡을 돌리지 않고 현재 phase만 읽는다. 콜드 터널
+ * 왕복 최악 0.93초에 약 10배 여유를 둔 10초로 낮춘다. Mirrors CheckOn-backend's
+ * own checkon.ai.counsel.get-read-timeout default (10s) for consistency.
  */
 @ConfigurationProperties("checkon.ai.counsel-draft")
 public record AiCounselDraftHttpProperties(
@@ -20,7 +18,7 @@ public record AiCounselDraftHttpProperties(
 	String baseUrl,
 	String draftsPath,
 	@DefaultValue("2s") Duration connectTimeout,
-	@DefaultValue("500s") Duration readTimeout
+	@DefaultValue("10s") Duration readTimeout
 ) {
 
 	URI requiredBaseUri() {

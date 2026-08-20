@@ -67,13 +67,12 @@ checkon:
       enabled: ${AI_COUNSEL_DRAFT_ENABLED:false}
       base-url: ${AI_COUNSEL_DRAFT_BASE_URL:}
       drafts-path: ${AI_COUNSEL_DRAFT_PATH:/v1/counsel/drafts}
-      # AI-A 2026-08-20 POST-계약변경: POST는 이제 적재만 하고 즉시 반환한다 --
-      # 이 값은 원래 "POST가 잡을 끝까지 돈다"는 구계약 기준(5 LLM콜x90초=450초)
-      # 으로 잡은 것이라 지금은 실제 필요치보다 훨씬 크다. 다만 AI팀이 "배포
-      # 실측 전에는 절대 낮추지 마세요"라고 명시했으므로 새 권고값을 받기
-      # 전까지는 그대로 둔다. GET 폴링 호출도 같은 클라이언트/타임아웃을 쓴다.
+      # AI-A 2026-08-20 타임아웃권고 실측(배포 반영됨): POST는 적재만 하고
+      # 즉시 반환하고, GET도 잡을 돌리지 않고 현재 phase만 읽는다. 콜드 터널
+      # 왕복 최악 0.93초에 약 10배 여유를 둔 10초로 낮춘다. POST/GET 모두
+      # 같은 클라이언트/타임아웃을 쓴다.
       connect-timeout: ${AI_COUNSEL_DRAFT_CONNECT_TIMEOUT:2s}
-      read-timeout: ${AI_COUNSEL_DRAFT_READ_TIMEOUT:500s}
+      read-timeout: ${AI_COUNSEL_DRAFT_READ_TIMEOUT:10s}
       worker-enabled: ${AI_COUNSEL_DRAFT_WORKER_ENABLED:false}
       poll-delay: ${AI_COUNSEL_DRAFT_POLL_DELAY:1s}
       # SUBMIT 직후 첫 폴링 간격, 그리고 GET 응답에 Retry-After가 없을 때의
@@ -82,9 +81,10 @@ checkon:
       poll-interval: ${AI_COUNSEL_DRAFT_AI_POLL_INTERVAL:2s}
       lock-timeout: ${AI_COUNSEL_DRAFT_LOCK_TIMEOUT:10m}
       retry-initial-delay: ${AI_COUNSEL_DRAFT_RETRY_INITIAL_DELAY:1s}
-      # 실측 종단 지연은 20초 안팎(계약 문서)이므로 여유를 넉넉히 두되 무한
-      # 폴링은 막는다.
-      max-elapsed: ${AI_COUNSEL_DRAFT_MAX_ELAPSED:2m}
+      # AI-A 2026-08-20 타임아웃권고: 잡당 최악 상한이 450초로 실측 확인됐다.
+      # 실측 종단 지연은 20~25초 안팎이지만 최악 케이스를 조기에 포기하지
+      # 않도록 450초보다 여유 있게 둔다.
+      max-elapsed: ${AI_COUNSEL_DRAFT_MAX_ELAPSED:8m}
       max-attempts: ${AI_COUNSEL_DRAFT_MAX_ATTEMPTS:3}
   kafka:
     problem-generation:
