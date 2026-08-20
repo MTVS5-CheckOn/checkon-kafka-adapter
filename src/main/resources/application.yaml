@@ -73,6 +73,11 @@ checkon:
       # 같은 클라이언트/타임아웃을 쓴다.
       connect-timeout: ${AI_COUNSEL_DRAFT_CONNECT_TIMEOUT:2s}
       read-timeout: ${AI_COUNSEL_DRAFT_READ_TIMEOUT:10s}
+      # refine은 백엔드→어댑터→AI로 그대로 중계되는 동기 LLM 호출이라 GET과
+      # 같은 예산을 쓸 수 없다(04 §1-1의 480초 유지, "일괄로 내리시면 refine이
+      # 터집니다" -- AI팀 경고). CounselDraftProxyConfiguration이 이 값으로
+      # GET과 별도의 RestClient를 만든다.
+      refine-read-timeout: ${AI_COUNSEL_DRAFT_REFINE_READ_TIMEOUT:480s}
       worker-enabled: ${AI_COUNSEL_DRAFT_WORKER_ENABLED:false}
       poll-delay: ${AI_COUNSEL_DRAFT_POLL_DELAY:1s}
       # SUBMIT 직후 첫 폴링 간격, 그리고 GET 응답에 Retry-After가 없을 때의
