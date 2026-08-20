@@ -4,14 +4,23 @@ import java.net.URI;
 import java.time.Duration;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.DefaultValue;
 
+/**
+ * connectTimeout/readTimeout default to the values documented in
+ * docs/CONTRACT_BOUNDARY.md ("read timeout은 60초보다 긴 65초를 사용한다") so a
+ * deployment that enables risk detection without separately setting
+ * AI_CONNECT_TIMEOUT/AI_READ_TIMEOUT still boots with a working, contract-sized
+ * timeout instead of null (mirrors ProblemGenerationProperties's own
+ * @DefaultValue pattern for the same fields).
+ */
 @ConfigurationProperties("checkon.ai.risk-detection")
 public record AiRiskDetectionHttpProperties(
 	boolean enabled,
 	String baseUrl,
 	String detectPath,
-	Duration connectTimeout,
-	Duration readTimeout
+	@DefaultValue("2s") Duration connectTimeout,
+	@DefaultValue("65s") Duration readTimeout
 ) {
 
 	URI requiredBaseUri() {

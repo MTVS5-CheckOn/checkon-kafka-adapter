@@ -56,8 +56,8 @@ checkon:
       enabled: ${AI_RISK_DETECTION_ENABLED:false}
       base-url: ${AI_BASE_URL:}
       detect-path: ${AI_DETECT_PATH:}
-      connect-timeout: ${AI_CONNECT_TIMEOUT:}
-      read-timeout: ${AI_READ_TIMEOUT:}
+      connect-timeout: ${AI_CONNECT_TIMEOUT:2s}
+      read-timeout: ${AI_READ_TIMEOUT:65s}
       worker-enabled: ${AI_RISK_DETECTION_WORKER_ENABLED:false}
       poll-delay: ${AI_RISK_DETECTION_POLL_DELAY:1s}
       lock-timeout: ${AI_RISK_DETECTION_LOCK_TIMEOUT:75s}
