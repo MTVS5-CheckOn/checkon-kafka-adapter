@@ -20,6 +20,9 @@ Adapter Outbox -> completed/failed topic -> CheckOn Backend
 - Testcontainers Kafka/PostgreSQL 수직 통합 검증
 - 문제 출제 child Kafka 요청, AI 제출·polling·items 조회, 결과 Outbox 발행
 - AI POST `execution_id` 정본 영속화와 GET 식별자 변동 차단
+- Inbox/Outbox 단조 증가 `claim_version` fencing과 기능별 attempt 이력
+- 위험 탐지·문제 출제·Outbox 발행의 독립 bounded scheduler
+- Actuator/Micrometer 기반 payload 비포함 내구성 지표
 
 ## 기술 기준
 
@@ -65,7 +68,7 @@ AI_PROBLEM_GENERATION_LANGUAGE_INFER_NODE=language.grammar.phonological_change
 
 CheckOn Backend의 `RISK_DETECTION_HTTP_ADAPTER_ENABLED`는 반드시 `false`로 둡니다. 독립 Adapter와 Backend 내장 fallback을 동시에 켜면 같은 requested 이벤트가 두 번 처리됩니다.
 
-`AI_RISK_DETECTION_LOCK_TIMEOUT`은 connect timeout과 read timeout의 합보다 충분히 길게 설정해야 합니다. 그렇지 않으면 오래 걸리는 HTTP 요청이 stale 작업으로 오인될 수 있습니다.
+두 기능의 lock timeout은 각각 connect timeout과 read timeout의 합보다 길어야 하며, 그렇지 않으면 시작이 실패합니다. 보수적 pool 기본값은 기능별 1개이고 `RISK_DETECTION_WORKER_POOL_SIZE`, `PROBLEM_GENERATION_WORKER_POOL_SIZE`, `OUTBOX_PUBLISHER_POOL_SIZE`로 1..16 범위에서 조정합니다.
 
 AI HTTP 호출은 HTTP/1.1로 고정합니다. 현재 AI 로컬 서버는 JDK HTTP 클라이언트의 기본 HTTP/2 업그레이드 요청에서 body를 빈 값처럼 읽어 `INVALID_SCHEMA`를 반환할 수 있습니다.
 
@@ -75,6 +78,8 @@ AI HTTP 호출은 HTTP/1.1로 고정합니다. 현재 AI 로컬 서버는 JDK HT
 - 동일 `event_id`와 동일 payload는 한 번만 Inbox에 저장합니다.
 - 동일 `event_id`의 다른 payload는 계약 충돌로 처리하고 요청 DLT로 보냅니다.
 - AI 호출은 DB 트랜잭션 밖에서 수행합니다.
+- claim할 때마다 `claim_version`이 증가합니다. 완료·실패·재시도와 broker ack는 event ID와 claim version이 모두 일치할 때만 반영됩니다.
+- stale reclaim은 이전 미종료 attempt를 `SUPERSEDED`로 남기며 늦은 Worker 결과는 fenced transition에서 거절됩니다.
 - AI 호출 성공 후 프로세스가 종료되면 stale lock 복구 과정에서 같은 `Idempotency-Key`로 다시 호출될 수 있습니다. 따라서 AI 서버의 멱등성 보장이 운영 활성화의 선결 조건입니다.
 - completed/failed 결과는 업무 상태와 같은 트랜잭션에서 Outbox에 기록합니다.
 - Kafka 브로커가 발행을 확인하기 전에는 결과를 완료로 표시하지 않습니다.

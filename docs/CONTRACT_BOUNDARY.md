@@ -41,3 +41,7 @@ ready. Backend IDs remain opaque aliases and the mapping does not add student da
 the returned `job_id` before polling and ignores changing `execution_id` values from
 both GET endpoints. This temporary compatibility rule can be removed only after the
 AI team confirms stable identifiers through one job lifecycle.
+
+## Adding another worker
+
+Parent counseling and monthly report contracts are not settled, so no topics, HTTP DTOs, state machines, or tables are created for them. After a contract is approved, add a feature package with its own Kafka event, AI DTOs, state machine, result factory, Inbox/Outbox/attempt migration, timeout, and retry policy. Reuse only the fencing value type, retry calculation, executor pattern, and low-cardinality metrics. Give the worker a dedicated bounded scheduler and connect only publication to the Outbox publisher scheduler. Do not merge feature state into a generic JSON `AiJob` table.
