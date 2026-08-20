@@ -42,6 +42,15 @@
         "week_start": "2026-08-10",
         "expected_count": 2,
         "submitted_count": 1
+      },
+      {
+        "kind": "weekly_activity",
+        "source_table": "student_week_activity",
+        "record_id": "activity-summary:st_abcdef0123456789abcdef0123456789:2026-08-10",
+        "student_ref": "st_abcdef0123456789abcdef0123456789",
+        "week_start": "2026-08-10",
+        "activity_count": 0,
+        "enrolled_seconds": 432000
       }
     ]
   }

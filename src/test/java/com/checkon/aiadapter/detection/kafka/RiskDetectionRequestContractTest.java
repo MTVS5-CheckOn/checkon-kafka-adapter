@@ -33,7 +33,7 @@ class RiskDetectionRequestContractTest {
 	}
 
 	@Test
-	@DisplayName("Given 최신 v0.2 요청 When 계약을 검증하면 Then detection_evidence를 포함해 통과한다")
+	@DisplayName("Given 최신 요청 When 계약을 검증하면 Then enrolled_seconds를 포함해 통과한다")
 	void acceptsLatestContract() {
 		// Given: setUp에서 최신 요청 fixture를 역직렬화한다.
 
@@ -41,7 +41,61 @@ class RiskDetectionRequestContractTest {
 		RiskDetectionRequestValidator.validate(TENANT_ALIAS, event);
 
 		// Then
-		assertThat(event.payload().detectionEvidence()).hasSize(1);
+		assertThat(event.payload().detectionEvidence()).hasSize(2);
+		assertThat(event.payload().detectionEvidence())
+			.filteredOn(item -> "weekly_activity".equals(item.kind()))
+			.singleElement()
+			.extracting(AiDetectionRequest.DetectionEvidence::enrolledSeconds)
+			.isEqualTo(432_000L);
+	}
+
+	@Test
+	@DisplayName("Given Adapter 선배포 중 legacy weekly activity When 검증하면 Then enrolled_seconds 누락을 허용한다")
+	void acceptsLegacyWeeklyActivityWithoutEnrolledSeconds() throws Exception {
+		// Given
+		var root = (tools.jackson.databind.node.ObjectNode)objectMapper.readTree(readFixture());
+		var evidence = (tools.jackson.databind.node.ArrayNode)root.at("/payload/detection_evidence");
+		((tools.jackson.databind.node.ObjectNode)evidence.get(1)).remove("enrolled_seconds");
+		RiskDetectionRequestedEvent legacyEvent = objectMapper.treeToValue(
+			root, RiskDetectionRequestedEvent.class);
+
+		// When
+		RiskDetectionRequestValidator.validate(TENANT_ALIAS, legacyEvent);
+
+		// Then
+		assertThat(legacyEvent.payload().detectionEvidence().get(1).enrolledSeconds()).isNull();
+	}
+
+	@Test
+	@DisplayName("Given weekly activity의 재원 시간이 범위를 벗어나면 When 검증하면 Then 요청을 거절한다")
+	void rejectsOutOfRangeEnrolledSeconds() throws Exception {
+		// Given
+		RiskDetectionRequestedEvent invalidEvent = withEnrolledSeconds(0);
+
+		// When / Then
+		assertThatThrownBy(() -> RiskDetectionRequestValidator.validate(TENANT_ALIAS, invalidEvent))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessage(
+				"payload.detection_evidence[].enrolled_seconds must be between 1 and 604800"
+			);
+	}
+
+	@Test
+	@DisplayName("Given weekly activity가 아닌 근거에 재원 시간이 있으면 When 검증하면 Then 요청을 거절한다")
+	void rejectsEnrolledSecondsOnNonWeeklyEvidence() throws Exception {
+		// Given
+		var root = (tools.jackson.databind.node.ObjectNode)objectMapper.readTree(readFixture());
+		var evidence = (tools.jackson.databind.node.ArrayNode)root.at("/payload/detection_evidence");
+		((tools.jackson.databind.node.ObjectNode)evidence.get(0)).put("enrolled_seconds", 60);
+		RiskDetectionRequestedEvent invalidEvent = objectMapper.treeToValue(
+			root, RiskDetectionRequestedEvent.class);
+
+		// When / Then
+		assertThatThrownBy(() -> RiskDetectionRequestValidator.validate(TENANT_ALIAS, invalidEvent))
+			.isInstanceOf(IllegalArgumentException.class)
+			.hasMessage(
+				"payload.detection_evidence[].enrolled_seconds is only valid for weekly_activity"
+			);
 	}
 
 	@Test
@@ -199,6 +253,15 @@ class RiskDetectionRequestContractTest {
 			event.requestId(), event.idempotencyKey(), event.snapshotHash(), event.occurredAt(),
 			payload
 		);
+	}
+
+	private RiskDetectionRequestedEvent withEnrolledSeconds(long enrolledSeconds)
+		throws Exception {
+		var root = (tools.jackson.databind.node.ObjectNode)objectMapper.readTree(readFixture());
+		var evidence = (tools.jackson.databind.node.ArrayNode)root.at("/payload/detection_evidence");
+		((tools.jackson.databind.node.ObjectNode)evidence.get(1))
+			.put("enrolled_seconds", enrolledSeconds);
+		return objectMapper.treeToValue(root, RiskDetectionRequestedEvent.class);
 	}
 
 	private String readFixture() throws IOException {

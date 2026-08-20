@@ -76,8 +76,35 @@ public final class RiskDetectionRequestValidator {
 			STUDENT_ALIAS, "payload.learning_events[].student_ref");
 		validateAliases(payload.alertContext(), AiDetectionRequest.AlertContext::studentRef,
 			STUDENT_ALIAS, "payload.alert_context[].student_ref");
-		validateAliases(payload.detectionEvidence(), AiDetectionRequest.DetectionEvidence::studentRef,
+		List<AiDetectionRequest.DetectionEvidence> evidence = requireList(
+			payload.detectionEvidence(), "payload.detection_evidence");
+		validateAliases(evidence, AiDetectionRequest.DetectionEvidence::studentRef,
 			STUDENT_ALIAS, "payload.detection_evidence[].student_ref");
+		for (AiDetectionRequest.DetectionEvidence item : evidence) {
+			validateEnrolledSeconds(item);
+		}
+	}
+
+	private static void validateEnrolledSeconds(
+		AiDetectionRequest.DetectionEvidence evidence
+	) {
+		Long enrolledSeconds = evidence.enrolledSeconds();
+		if (!"weekly_activity".equals(evidence.kind())) {
+			if (enrolledSeconds != null) {
+				throw new IllegalArgumentException(
+					"payload.detection_evidence[].enrolled_seconds is only valid for weekly_activity"
+				);
+			}
+			return;
+		}
+		// Adapter-first rollout compatibility: legacy Backend requests can omit the new
+		// field. New Backend requests require it and any supplied value is validated.
+		if (enrolledSeconds == null) return;
+		if (enrolledSeconds < 1 || enrolledSeconds > 604_800) {
+			throw new IllegalArgumentException(
+				"payload.detection_evidence[].enrolled_seconds must be between 1 and 604800"
+			);
+		}
 	}
 
 	private static void validateIdempotencyKey(String tenantAlias, String idempotencyKey) {

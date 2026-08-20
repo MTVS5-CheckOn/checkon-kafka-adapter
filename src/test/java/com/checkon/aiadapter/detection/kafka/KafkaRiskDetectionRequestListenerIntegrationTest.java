@@ -75,10 +75,38 @@ class KafkaRiskDetectionRequestListenerIntegrationTest {
 		verify(handler, timeout(15_000)).handle(
 			org.mockito.ArgumentMatchers.argThat(event ->
 				event.eventId().equals(UUID.fromString("019b0000-0000-7000-8000-000000000011"))
-					&& event.payload().detectionEvidence().size() == 1
+					&& event.payload().detectionEvidence().size() == 2
+					&& event.payload().detectionEvidence().get(1).enrolledSeconds() == 432_000L
 			),
 			org.mockito.ArgumentMatchers.eq(rawEvent)
 		);
+	}
+
+	@Test
+	@DisplayName("Given 잘못된 enrolled_seconds When Kafka에서 소비하면 Then 재시도 없이 DLT로 보낸다")
+	void sendsInvalidEnrolledSecondsDirectlyToDlt() throws Exception {
+		// Given
+		String invalidEvent = readFixture().replace(
+			"\"enrolled_seconds\": 432000",
+			"\"enrolled_seconds\": 0"
+		);
+
+		// When
+		ConsumerRecord<String, String> dltRecord;
+		try (KafkaConsumer<String, String> dltConsumer = dltConsumer()) {
+			dltConsumer.subscribe(List.of(DLT_TOPIC));
+			kafkaTemplate.send(REQUESTED_TOPIC, TENANT_ALIAS, invalidEvent)
+				.get(10, TimeUnit.SECONDS);
+			dltRecord = pollOne(
+				dltConsumer, Duration.ofSeconds(20), "\"enrolled_seconds\": 0"
+			);
+		}
+
+		// Then
+		assertThat(dltRecord).isNotNull();
+		assertThat(dltRecord.key()).isEqualTo(TENANT_ALIAS);
+		assertThat(dltRecord.value()).contains("\"enrolled_seconds\": 0");
+		verifyNoInteractions(handler);
 	}
 
 	@Test
@@ -96,7 +124,9 @@ class KafkaRiskDetectionRequestListenerIntegrationTest {
 			dltConsumer.subscribe(List.of(DLT_TOPIC));
 			kafkaTemplate.send(REQUESTED_TOPIC, TENANT_ALIAS, invalidEvent)
 				.get(10, TimeUnit.SECONDS);
-			dltRecord = pollOne(dltConsumer, Duration.ofSeconds(20));
+			dltRecord = pollOne(
+				dltConsumer, Duration.ofSeconds(20), "\"schema_version\": \"2.0\""
+			);
 		}
 
 		// Then
@@ -118,12 +148,13 @@ class KafkaRiskDetectionRequestListenerIntegrationTest {
 
 	private ConsumerRecord<String, String> pollOne(
 		KafkaConsumer<String, String> consumer,
-		Duration timeout
+		Duration timeout,
+		String expectedBodyFragment
 	) {
 		Instant deadline = Instant.now().plus(timeout);
 		while (Instant.now().isBefore(deadline)) {
 			for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(500))) {
-				return record;
+				if (record.value().contains(expectedBodyFragment)) return record;
 			}
 		}
 		return null;

@@ -76,6 +76,7 @@ public record AiDetectionRequest(
 		@JsonProperty("expected_count") Integer expectedCount,
 		@JsonProperty("submitted_count") Integer submittedCount,
 		@JsonProperty("activity_count") Integer activityCount,
+		@JsonProperty("enrolled_seconds") Long enrolledSeconds,
 		@JsonProperty("occurred_at") OffsetDateTime occurredAt,
 		@JsonProperty("from_status") String fromStatus,
 		@JsonProperty("to_status") String toStatus
