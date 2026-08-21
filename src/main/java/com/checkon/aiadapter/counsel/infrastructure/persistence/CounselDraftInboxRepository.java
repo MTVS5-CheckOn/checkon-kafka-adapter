@@ -109,7 +109,7 @@ public class CounselDraftInboxRepository {
 			(attempt_id, source_event_id, phase, claim_version, started_at, stale_reclaim)
 			SELECT ?, event_id, phase, claim_version, ?, stale_reclaim FROM updated
 			)
-			SELECT """ + SELECT_COLUMNS + """
+			SELECT\s""" + SELECT_COLUMNS + """
 			, stale_reclaim FROM updated
 			""",
 			(resultSet, rowNumber) -> claimedRequest(
