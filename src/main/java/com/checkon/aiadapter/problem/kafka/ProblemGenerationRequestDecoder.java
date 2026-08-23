@@ -29,8 +29,9 @@ public class ProblemGenerationRequestDecoder {
 			if (!"problem_generation.requested".equals(text(root, "event_type"))) {
 				throw invalid("event_type must be problem_generation.requested");
 			}
-			if (!"pg-child-request-1".equals(text(root, "schema_version"))) {
-				throw invalid("schema_version must be pg-child-request-1");
+			String schemaVersion = text(root, "schema_version");
+			if (!java.util.Set.of("pg-child-request-1", "pg-child-request-2").contains(schemaVersion)) {
+				throw invalid("schema_version must be pg-child-request-1 or pg-child-request-2");
 			}
 			String tenant = text(root, "tenant_id");
 			if (!TENANT_ALIAS.matcher(tenant).matches() || !tenant.equals(messageKey)) {

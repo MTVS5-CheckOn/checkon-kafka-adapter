@@ -30,9 +30,11 @@ import com.checkon.aiadapter.problem.ai.ProblemSubmissionResponse;
 import com.checkon.aiadapter.problem.ai.ProblemJobResponse;
 import com.checkon.aiadapter.problem.ai.ProblemItemSetResponse;
 import com.checkon.aiadapter.problem.ai.ProblemItemDetailResponse;
+import com.checkon.aiadapter.problem.ai.ProblemRevisionResponse;
 import com.checkon.aiadapter.problem.application.ProblemGenerationExecutionWorker;
 import com.checkon.aiadapter.problem.infrastructure.ProblemGenerationStore;
 import com.checkon.aiadapter.problem.kafka.ProblemGenerationRequestDecoder;
+import com.checkon.aiadapter.problem.kafka.ProblemGenerationRevisionRequestDecoder;
 
 import tools.jackson.databind.ObjectMapper;
 
@@ -68,6 +70,7 @@ class ProblemGenerationDurabilityIntegrationTest {
 
 	@Autowired ProblemGenerationStore store;
 	@Autowired ProblemGenerationRequestDecoder decoder;
+	@Autowired ProblemGenerationRevisionRequestDecoder revisionDecoder;
 	@Autowired ProblemGenerationExecutionWorker worker;
 	@Autowired JdbcTemplate jdbc;
 	@Autowired ObjectMapper objectMapper;
@@ -77,6 +80,8 @@ class ProblemGenerationDurabilityIntegrationTest {
 	void clean() {
 		jdbc.update("DELETE FROM outbox_publish_attempt WHERE worker_kind='problem_generation'");
 		jdbc.update("DELETE FROM problem_generation_outbox");
+		jdbc.update("DELETE FROM problem_generation_revision_attempt");
+		jdbc.update("DELETE FROM problem_generation_revision_inbox");
 		jdbc.update("DELETE FROM problem_generation_attempt");
 		jdbc.update("DELETE FROM problem_generation_request_inbox");
 	}
@@ -131,16 +136,15 @@ class ProblemGenerationDurabilityIntegrationTest {
 
 		// Then
 		assertThat(inboxStatus()).isEqualTo("OUTCOME_PENDING");
-		String payload = jdbc.queryForObject("SELECT event_payload::text FROM problem_generation_outbox",
-			String.class);
-		assertThat(payload)
+		String reference=jdbc.queryForObject("SELECT event_payload::text FROM problem_generation_outbox WHERE event_kind='terminal'",String.class);
+		String slot=jdbc.queryForObject("SELECT event_payload::text FROM problem_generation_outbox WHERE event_kind='slot'",String.class);
+		assertThat(reference)
 			.contains("\"problem_execution_id\": \"" + EXECUTION + "\"")
 			.contains("\"job_id\": \"job-48\"")
 			.contains("\"execution_id\": \"ai-exec-48\"")
 			.doesNotContain("wrong-job-exec", "wrong-items-exec", "wrong-items-meta-exec")
-			.contains("\"set_id\": \"set-48\"")
-			.contains("\"stem\": \"문제 본문\"")
-			.contains("\"correct_no\": 1");
+			.contains("\"set_id\": \"set-48\"").doesNotContain("문제 본문");
+		assertThat(slot).contains("\"stem\": \"문제 본문\"","\"correct_no\": 1");
 	}
 
 	@Test
@@ -173,27 +177,28 @@ class ProblemGenerationDurabilityIntegrationTest {
 	}
 
 	@Test
-	@DisplayName("Given Adapter 접수 후 21분이 지났을 때 When worker가 claim하면 Then AI를 호출하지 않고 timed_out으로 종결한다")
-	void failsClosedAtAdapterTimeLimit() throws Exception {
+	@DisplayName("Given 오래 대기한 요청 When worker가 claim하면 Then 고정 시간 초과로 실패시키지 않고 같은 논리 요청을 계속한다")
+	void keepsReconcilingPastTheFormerAdapterTimeLimit() throws Exception {
 		// Given
 		var event=decoder.decode(TENANT,requestEvent());
 		store.register(event,UUID.randomUUID(),requestEvent(),Instant.now().minus(Duration.ofMinutes(22)));
 
 		// When
+		when(client.submit(any(),any())).thenReturn(read("{\"data\":{\"job_id\":\"old-job\",\"status\":\"queued\"},\"meta\":{\"execution_id\":\"old-exec\"}}",ProblemSubmissionResponse.class));
 		assertThat(worker.processOne()).isTrue();
 
 		// Then
-		String payload=jdbc.queryForObject("SELECT event_payload::text FROM problem_generation_outbox",String.class);
-		assertThat(payload).contains("\"child_status\": \"timed_out\"","\"error_code\": \"ADAPTER_TIME_LIMIT_EXCEEDED\"");
-		verify(client,org.mockito.Mockito.never()).submit(any(),any());
+		assertThat(inboxStatus()).isEqualTo("WAITING");
+		assertThat(count("problem_generation_outbox")).isZero();
+		verify(client,times(1)).submit(any(),any());
 	}
 
 	@Test
-	@DisplayName("Given 정규화 결과가 3 MiB를 넘을 때 When 성공 결과를 만들면 Then result_ref 없이 RESULT_TOO_LARGE로 실패한다")
+	@DisplayName("Given slot 상세 이벤트가 1 MiB를 넘을 때 When 결과를 만들면 Then 본문을 발행하지 않고 fail-closed한다")
 	void rejectsOversizedNormalizedResult() throws Exception {
 		// Given
 		var event=decoder.decode(TENANT,requestEvent()); store.register(event,UUID.randomUUID(),requestEvent(),Instant.now());
-		when(client.submit(any(),any())).thenReturn(read("{\"data\":{\"job_id\":\"large-job\"},\"meta\":{\"execution_id\":\"large-exec\"}}",ProblemSubmissionResponse.class));
+		when(client.submit(any(),any())).thenReturn(read("{\"data\":{\"job_id\":\"large-job\",\"status\":\"queued\"},\"meta\":{\"execution_id\":\"large-exec\"}}",ProblemSubmissionResponse.class));
 		assertThat(worker.processOne()).isTrue(); jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '5 seconds'");
 		when(client.job(any(),any())).thenReturn(new AiProblemClient.JobResponse(read(
 			"{\"data\":{\"status\":\"succeeded\",\"result\":{\"set_id\":\"large-set\"}}}",ProblemJobResponse.class),null));
@@ -206,7 +211,7 @@ class ProblemGenerationDurabilityIntegrationTest {
 
 		// Then
 		String payload=jdbc.queryForObject("SELECT event_payload::text FROM problem_generation_outbox",String.class);
-		assertThat(payload).contains("\"error_code\": \"RESULT_TOO_LARGE\"").doesNotContain("large-item",huge.substring(0,100));
+		assertThat(payload).contains("\"error_code\": \"DETAIL_EVENT_TOO_LARGE\"").doesNotContain("large-item",huge.substring(0,100));
 	}
 
 	@Test
@@ -214,7 +219,7 @@ class ProblemGenerationDurabilityIntegrationTest {
 	void honorsRetryAfterAsPollingAdvice() throws Exception {
 		// Given
 		var event=decoder.decode(TENANT,requestEvent()); store.register(event,UUID.randomUUID(),requestEvent(),Instant.now());
-		when(client.submit(any(),any())).thenReturn(read("{\"data\":{\"job_id\":\"wait-job\"},\"meta\":{\"execution_id\":\"wait-exec\"}}",ProblemSubmissionResponse.class));
+		when(client.submit(any(),any())).thenReturn(read("{\"data\":{\"job_id\":\"wait-job\",\"status\":\"queued\"},\"meta\":{\"execution_id\":\"wait-exec\"}}",ProblemSubmissionResponse.class));
 		assertThat(worker.processOne()).isTrue(); jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '5 seconds'");
 		Instant before=Instant.now();
 		when(client.job(any(),any())).thenReturn(new AiProblemClient.JobResponse(read("{\"data\":{\"status\":\"queued\"}}",ProblemJobResponse.class),Duration.ofSeconds(10)));
@@ -266,6 +271,73 @@ class ProblemGenerationDurabilityIntegrationTest {
 		assertThat(count("problem_generation_outbox")).isZero();
 	}
 
+	@Test
+	@DisplayName("Given 수정 가능한 slot 요청 When AI 수정과 상세 재조회가 성공하면 Then revision 결과를 별도 Outbox에 저장한다")
+	void storesRevisionResultAfterRefetchingSlotDetail() throws Exception {
+		// Given
+		prepareRevisionTarget(); String raw=revisionRequestEvent(0);
+		store.registerRevision(revisionDecoder.decode(TENANT,raw),raw,Instant.now());
+		when(client.revise(any(),anyInt(),any(),any())).thenReturn(read("""
+			{"data":{"set_id":"set-48","slot_index":0,"current_revision_no":1},
+			 "meta":{"execution_id":"revision-exec-1"}}
+			""",ProblemRevisionResponse.class));
+		when(client.item(any(),anyInt(),any())).thenReturn(read("""
+			{"data":{"set_id":"set-48","slot_index":0,"item_id":"item-48","status":"verified",
+			 "current_revision_no":1,"available_actions":["refine"],"revisions":[{"revision_no":1}],
+			 "item":{"area_tag":"language","type_tag":"concept","skill_node_id":"language.node",
+			 "stem":"수정된 문두","choices":[
+			 {"no":1,"text":"정답","why_wrong":null,"misconception_tag":null},
+			 {"no":2,"text":"오답2","why_wrong":"개념 혼동","misconception_tag":"concept_confusion"},
+			 {"no":3,"text":"오답3","why_wrong":"대상 혼동","misconception_tag":"target_confusion"},
+			 {"no":4,"text":"오답4","why_wrong":"범위 혼동","misconception_tag":"range_confusion"},
+			 {"no":5,"text":"오답5","why_wrong":"조건 혼동","misconception_tag":"condition_confusion"}],
+			 "answer":{"correct_no":1},"rationale":"수정 근거"}}}
+			""",ProblemItemDetailResponse.class));
+
+		// When
+		assertThat(worker.processOne()).isTrue();
+
+		// Then
+		assertThat(jdbc.queryForObject("SELECT status FROM problem_generation_revision_inbox",String.class)).isEqualTo("OUTCOME_PENDING");
+		String payload=jdbc.queryForObject("SELECT event_payload::text FROM problem_generation_outbox WHERE revision_source_event_id IS NOT NULL",String.class);
+		assertThat(payload).contains("problem_generation.revision.succeeded","revision-exec-1","수정된 문두",
+			"\"current_revision_no\": 1","concept_confusion");
+		verify(client).revise(org.mockito.ArgumentMatchers.eq("set-48"),org.mockito.ArgumentMatchers.eq(0),
+			org.mockito.ArgumentMatchers.contains("\"base_revision_no\""),any());
+	}
+
+	@Test
+	@DisplayName("Given 오래된 revision 번호 When AI가 충돌을 반환하면 Then reason과 현재 번호를 Backend 결과에 보존한다")
+	void preservesRevisionConflictDetails() {
+		// Given
+		prepareRevisionTarget(); String raw=revisionRequestEvent(0);
+		store.registerRevision(revisionDecoder.decode(TENANT,raw),raw,Instant.now());
+		when(client.revise(any(),anyInt(),any(),any())).thenThrow(
+			new AiProblemClientException("REVISION_CONFLICT",false,"stale_base_revision",1,null));
+
+		// When
+		assertThat(worker.processOne()).isTrue();
+
+		// Then
+		String payload=jdbc.queryForObject("SELECT event_payload::text FROM problem_generation_outbox WHERE revision_source_event_id IS NOT NULL",String.class);
+		assertThat(payload).contains("problem_generation.revision.failed","REVISION_CONFLICT",
+			"stale_base_revision","\"current_revision_no\": 1");
+		verify(client,org.mockito.Mockito.never()).item(any(),anyInt(),any());
+	}
+
+	private void prepareRevisionTarget(){var event=decoder.decode(TENANT,requestEvent());
+		store.register(event,UUID.randomUUID(),requestEvent(),Instant.now());
+		jdbc.update("UPDATE problem_generation_request_inbox SET status='OUTCOME_PUBLISHED',phase='POLL',ai_set_id='set-48',ai_job_id='job-48',ai_execution_id='exec-48'");}
+
+	private String revisionRequestEvent(int baseRevisionNo){return """
+		{"event_id":"01980000-0000-7000-8000-000000000031","event_type":"problem_generation.revision.requested",
+		 "occurred_at":"2026-08-23T00:00:00Z","tenant_id":"%s","schema_version":"pg-revision-request-1",
+		 "correlation_id":"%s","payload":{"request_id":"%s","problem_execution_id":"%s",
+		 "revision_request_id":"01980000-0000-7000-8000-000000000032","set_id":"set-48","slot_index":0,
+		 "base_revision_no":%d,"revision_kind":"ai_refine","instruction":"문두를 명확하게 수정",
+		 "idempotency_key":"problem-revision:01980000-0000-7000-8000-000000000032"}}
+		""".formatted(TENANT,REQUEST,REQUEST,EXECUTION,baseRevisionNo);}
+
 	private String inboxStatus() {
 		return jdbc.queryForObject("SELECT status FROM problem_generation_request_inbox WHERE event_id=?",
 			String.class, EVENT);
@@ -316,7 +388,7 @@ class ProblemGenerationDurabilityIntegrationTest {
 		return """
 			{
 			 "event_id":"%s","event_type":"problem_generation.requested","occurred_at":"2026-08-13T00:00:00Z",
-			 "tenant_id":"%s","schema_version":"pg-child-request-1","correlation_id":"%s",
+			 "tenant_id":"%s","schema_version":"pg-child-request-2","correlation_id":"%s",
 			 "payload":{"problem_request_id":"%s","problem_execution_id":"%s","target_index":0,
 			  "idempotency_key":"issue-48-child-0","request":{"target_kind":"student","target_ref":"st_0123456789abcdef0123456789abcdef","target_source":"teacher_manual","manual_targets":["language.node.infer"],"taxonomy_version":"v1","area_tag":"language","type_tags":["infer"],"item_format":"mcq","count":1}}
 			}

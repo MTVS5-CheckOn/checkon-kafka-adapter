@@ -7,7 +7,10 @@ public record ProblemSubmissionResponse(Data data, Meta meta) {
 		@JsonProperty("execution_id") String executionId) { }
 	public record Meta(@JsonProperty("execution_id") String executionId) { }
 
-	public String requiredJobId() { return required(data == null ? null : data.jobId(), "job_id"); }
+	public String requiredJobId() {
+		if(data==null||!"queued".equalsIgnoreCase(data.status())) throw new IllegalArgumentException("submission status must be queued");
+		return required(data.jobId(), "job_id");
+	}
 	public String canonicalExecutionId() {
 		String value = data != null && data.executionId() != null ? data.executionId() : meta == null ? null : meta.executionId();
 		return required(value, "execution_id");

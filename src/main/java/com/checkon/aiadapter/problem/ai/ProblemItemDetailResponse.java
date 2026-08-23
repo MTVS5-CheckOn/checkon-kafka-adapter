@@ -6,5 +6,9 @@ import tools.jackson.databind.JsonNode;
 public record ProblemItemDetailResponse(Data data) {
 	public record Data(@JsonProperty("set_id") String setId,@JsonProperty("slot_index") Integer slotIndex,
 		@JsonProperty("item_id") String itemId,String status,JsonNode item,JsonNode verification,
-		@JsonProperty("available_actions") JsonNode availableActions) { }
+		@JsonProperty("current_revision_no") Integer currentRevisionNo,
+		@JsonProperty("available_actions") JsonNode availableActions,
+		JsonNode revisions,@JsonProperty("review_reason") String reviewReason,
+		@JsonProperty("failure_reason") String failureReason,
+		@JsonProperty("failure_detail") JsonNode failureDetail) { }
 }
