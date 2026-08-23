@@ -190,7 +190,8 @@ public class ProblemGenerationOutcomeFactory {
 	private static Map<String,Object> revisionPayload(ClaimedRevision request) {
 		Map<String,Object> payload=new LinkedHashMap<>(); payload.put("problem_request_id",request.problemRequestId().toString());
 		payload.put("problem_execution_id",request.problemExecutionId().toString()); payload.put("revision_request_id",request.revisionRequestId().toString());
-		payload.put("set_id",request.setId()); payload.put("slot_index",request.slotIndex()); return payload;
+		payload.put("target_index",request.targetIndex()); payload.put("set_id",request.setId());
+		payload.put("slot_index",request.slotIndex()); return payload;
 	}
 
 	private static Map<Integer,ProblemItemDetailResponse.Data> detailMap(String setId,List<ProblemItemDetailResponse> details) {

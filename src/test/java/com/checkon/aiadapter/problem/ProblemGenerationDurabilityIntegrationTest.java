@@ -301,7 +301,7 @@ class ProblemGenerationDurabilityIntegrationTest {
 		assertThat(jdbc.queryForObject("SELECT status FROM problem_generation_revision_inbox",String.class)).isEqualTo("OUTCOME_PENDING");
 		String payload=jdbc.queryForObject("SELECT event_payload::text FROM problem_generation_outbox WHERE revision_source_event_id IS NOT NULL",String.class);
 		assertThat(payload).contains("problem_generation.revision.succeeded","revision-exec-1","수정된 문두",
-			"\"current_revision_no\": 1","concept_confusion");
+			"\"target_index\": 0","\"current_revision_no\": 1","concept_confusion");
 		verify(client).revise(org.mockito.ArgumentMatchers.eq("set-48"),org.mockito.ArgumentMatchers.eq(0),
 			org.mockito.ArgumentMatchers.contains("\"base_revision_no\""),any());
 	}
@@ -321,7 +321,7 @@ class ProblemGenerationDurabilityIntegrationTest {
 		// Then
 		String payload=jdbc.queryForObject("SELECT event_payload::text FROM problem_generation_outbox WHERE revision_source_event_id IS NOT NULL",String.class);
 		assertThat(payload).contains("problem_generation.revision.failed","REVISION_CONFLICT",
-			"stale_base_revision","\"current_revision_no\": 1");
+			"stale_base_revision","\"target_index\": 0","\"current_revision_no\": 1");
 		verify(client,org.mockito.Mockito.never()).item(any(),anyInt(),any());
 	}
 

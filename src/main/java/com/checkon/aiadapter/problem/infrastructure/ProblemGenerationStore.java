@@ -173,16 +173,19 @@ public class ProblemGenerationStore {
 	public Optional<ClaimedRevision> claimRevision(Instant now,Duration lockTimeout) {
 		UUID attemptId=ids.next(); List<ClaimedRevision> claimed=jdbc.query("""
 			WITH candidate AS (
-			 SELECT event_id,status='PROCESSING' AS stale_reclaim FROM problem_generation_revision_inbox
-			 WHERE ((status IN ('RECEIVED','RETRY_PENDING') AND next_attempt_at<=?)
-			    OR (status='PROCESSING' AND locked_at<=?))
-			 ORDER BY next_attempt_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1
+			 SELECT revision.event_id,revision.status='PROCESSING' AS stale_reclaim,generation.target_index
+			 FROM problem_generation_revision_inbox revision
+			 JOIN problem_generation_request_inbox generation
+			   ON generation.event_id=revision.generation_source_event_id
+			 WHERE ((revision.status IN ('RECEIVED','RETRY_PENDING') AND revision.next_attempt_at<=?)
+			    OR (revision.status='PROCESSING' AND revision.locked_at<=?))
+			 ORDER BY revision.next_attempt_at,revision.created_at FOR UPDATE OF revision SKIP LOCKED LIMIT 1
 			), updated AS (
 			 UPDATE problem_generation_revision_inbox inbox
 			 SET status='PROCESSING',http_attempts=http_attempts+1,claim_version=claim_version+1,locked_at=?,updated_at=?
 			 FROM candidate WHERE inbox.event_id=candidate.event_id
 			 RETURNING inbox.event_id,inbox.revision_request_id,inbox.generation_source_event_id,inbox.tenant_alias,
-			 inbox.problem_request_id,inbox.problem_execution_id,inbox.set_id,inbox.slot_index,inbox.request_id,
+			 inbox.problem_request_id,inbox.problem_execution_id,candidate.target_index,inbox.set_id,inbox.slot_index,inbox.request_id,
 			 inbox.idempotency_key,inbox.request_payload::text,inbox.http_attempts,inbox.claim_version,candidate.stale_reclaim
 			), attempt AS (
 			 INSERT INTO problem_generation_revision_attempt
@@ -190,8 +193,8 @@ public class ProblemGenerationStore {
 			 SELECT ?,event_id,claim_version,?,stale_reclaim FROM updated)
 			SELECT * FROM updated
 			""",(rs,row)->new ClaimedRevision(rs.getObject(1,UUID.class),rs.getObject(2,UUID.class),rs.getObject(3,UUID.class),
-			rs.getString(4),rs.getObject(5,UUID.class),rs.getObject(6,UUID.class),rs.getString(7),rs.getInt(8),
-			rs.getString(9),rs.getString(10),rs.getString(11),rs.getInt(12),rs.getLong(13),rs.getBoolean(14)),
+			rs.getString(4),rs.getObject(5,UUID.class),rs.getObject(6,UUID.class),rs.getInt(7),rs.getString(8),rs.getInt(9),
+			rs.getString(10),rs.getString(11),rs.getString(12),rs.getInt(13),rs.getLong(14),rs.getBoolean(15)),
 			Timestamp.from(now),Timestamp.from(now.minus(lockTimeout)),Timestamp.from(now),Timestamp.from(now),attemptId,Timestamp.from(now));
 		claimed.stream().filter(ClaimedRevision::staleReclaim).findFirst().ifPresent(value->jdbc.update("""
 			UPDATE problem_generation_revision_attempt SET finished_at=?,result_status='SUPERSEDED',superseded=TRUE
@@ -361,7 +364,7 @@ public class ProblemGenerationStore {
 	public record ClaimedOutbox(UUID eventId, UUID sourceEventId,UUID revisionSourceEventId,boolean terminalOutcome,String topic,
 		String messageKey, String eventPayload, int publishAttempt,long claimVersion,boolean staleReclaim) { }
 	public record ClaimedRevision(UUID eventId,UUID revisionRequestId,UUID generationSourceEventId,String tenantAlias,
-		UUID problemRequestId,UUID problemExecutionId,String setId,int slotIndex,String requestId,String idempotencyKey,
+		UUID problemRequestId,UUID problemExecutionId,int targetIndex,String setId,int slotIndex,String requestId,String idempotencyKey,
 		String requestBody,int httpAttempt,long claimVersion,boolean staleReclaim) { }
 	private record ClaimedOutboxState(UUID revisionSourceEventId,boolean terminalOutcome) { }
 }
