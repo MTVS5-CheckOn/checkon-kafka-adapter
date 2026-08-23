@@ -63,12 +63,12 @@ metric label에는 payload, alias/UUID, 학생·강사 정보, 문항·상담 �
 - 실제 DB 비밀번호, AI 인증정보와 토큰은 환경변수 또는 비밀 저장소로 주입합니다.
 # Problem Generation worker
 
-The problem-generation path consumes one `pg-child-request-1` event per studio target.
+The problem-generation path consumes one `pg-child-request-2` event per studio target.
 Enable both `PROBLEM_GENERATION_KAFKA_ENABLED` and
 `AI_PROBLEM_GENERATION_WORKER_ENABLED` only when Kafka, the adapter database, and the
 AI `/v1/problems` API are reachable. The adapter persists the raw event, stable
 `adapter_execution_id`, the `job_id` and canonical `execution_id` returned by POST,
-and the current `SUBMIT`/`POLL` phase. A stale lock is reclaimed after
+the current `SUBMIT`/`POLL` phase, worker phase, domain status, and set ID. A stale lock is reclaimed after
 `AI_PROBLEM_GENERATION_LOCK_TIMEOUT`.
 
 Adapter restart recovery and AI restart recovery are different guarantees. Once POST
@@ -77,13 +77,16 @@ not make the AI process resume an in-memory queued job. If AI reports
 `detail.reason=result_unavailable_after_restart`, the Adapter publishes a terminal
 failed result with that reason and never submits the POLL-phase request again.
 
-Terminal AI items are flattened into a `worker_job.succeeded` result event and written
-to `problem_generation_outbox` in the same transaction that closes the inbox work.
-Kafka publication is retried from that outbox. Contract-invalid Kafka requests go to
+Nonterminal jobs remain reconciliation work without a fixed elapsed-time failure.
+Terminal metadata is written as one `worker_job.succeeded` reference event, followed
+by one `problem_generation.slot.detail` event per slot. The terminal and slot Outbox
+rows are created in the same transaction, and the generation Inbox is complete only
+after every terminal row receives a broker ack. Kafka publication is retried from that outbox. Contract-invalid Kafka requests go to
 the request topic's `.dlt`; exhausted AI calls produce a durable `worker_job.failed`
 result so the backend can aggregate `PARTIAL_SUCCESS` across child targets.
 
-The v1 generation boundary accepts only `language + CONCEPT` and
-`language + INFER`. Both node IDs are environment-configurable. Other cells are
-stopped before HTTP with `NO_EVIDENCE_READY_TARGET`. `rejected_insufficient` remains
-a forward-compatible parser value but is not expected from the wired v1 AI path.
+The generation boundary accepts five areas and validates each area's source material
+before AI HTTP. It never substitutes a curriculum node. Revision requests use a
+separate durable Inbox and call `ai_refine`; the Adapter then refetches the slot detail
+and publishes a revision result. Reference events are limited to 64 KiB and slot or
+revision detail events to 1 MiB.

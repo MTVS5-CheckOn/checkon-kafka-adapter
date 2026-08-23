@@ -28,19 +28,26 @@ Adapter는 CheckOn 백엔드 DB를 조회하지 않습니다. AI 입력의 선�
 - 응답의 structured signal(`metric`, `observed`, `baseline`, `sample_size`), `advisory`, `lifecycle`, structured evidence(`role`, `observed`, `sample_size`, `occurred_on`), `meta.execution_id`, `meta.versions`를 손실 없이 completed payload에 보존한다.
 # Problem Studio to AI mapping
 
-The frontend studio selects an area/type cell while the AI contract requires an
-explicit curriculum node. The v1 Backend admits only `language + CONCEPT` and
-`language + INFER`; the Adapter maps those cells to separately configurable node IDs.
-The current replaceable defaults both point to
-`language.grammar.phonological_change`, which is present in the inspected AI graph and
-has both type affinities. Reading, literature, speech/writing, media, and other type
-tags are rejected before AI HTTP because their evidence/source contracts are not
-ready. Backend IDs remain opaque aliases and the mapping does not add student data.
+Backend는 진단에서 교사가 선택한 curriculum `skill_node_id`를 `manual_targets`에 담고,
+Adapter는 이를 다시 선택하거나 우선순위화하지 않습니다. `language`, `reading`,
+`literature`, `speech_writing`, `media`의 `passage`·`work_selection`도 수신 JSON을
+검증한 뒤 AI 요청에 그대로 보존합니다. Backend ID는 opaque alias로 유지합니다.
 
 `POST /v1/problems` owns the canonical AI `execution_id`. The Adapter stores it with
 the returned `job_id` before polling and ignores changing `execution_id` values from
 both GET endpoints. This temporary compatibility rule can be removed only after the
 AI team confirms stable identifiers through one job lifecycle.
+
+AI job의 `queued | leased | running | paused`는 transport 실패가 아닙니다. Adapter는
+고정 경과 시간으로 실패 처리하지 않고 같은 `job_id`를 계속 polling하며, 상태가 바뀌면
+64 KiB 이하 progress 참조 이벤트를 발행합니다. `succeeded`에서는 `set_id`로 목록과
+각 slot 상세를 조회해 terminal 참조 1건과 slot별 상세 이벤트를 같은 트랜잭션에 저장합니다.
+상세 및 revision 결과는 이벤트당 1 MiB를 넘으면 fail-closed합니다.
+
+Backend의 `problem_generation.revision.requested`는 생성 요청과 같은 Kafka topic에서
+별도 revision Inbox로 분기합니다. Adapter는 `ai_refine` POST 후 slot 상세를 다시 조회해
+`problem_generation.revision.succeeded`를 발행하며, 409의 reason과 현재 revision 번호를
+실패 결과에 보존합니다.
 
 ## Adding another worker
 
