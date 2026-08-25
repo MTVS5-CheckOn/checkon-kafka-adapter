@@ -80,6 +80,24 @@ class RestCounselSynchronousProxyTest {
 		}
 
 		@Test
+		@DisplayName("When AI 성공 응답에 내부 헤더가 있으면 Then JSON Content-Type만 보존한다")
+		void keepsJsonContentTypeWithoutRelayingUpstreamHeaders() throws Exception {
+			String response = readFixture("post_labels_suggest.200.empty.json");
+			labelsServer.expect(once(), requestTo(LABELS_BASE_URL + "/v1/labels/suggest"))
+				.andRespond(withSuccess(response, APPLICATION_JSON)
+					.header("X-Upstream-Internal", "hidden"));
+
+			var actual = proxy.suggestLabels(
+				readFixture("post_labels_suggest.request.json"), headers("req-headers-3005"));
+
+			assertThat(actual.getStatusCode()).isEqualTo(OK);
+			assertThat(actual.getBody()).isEqualTo(response);
+			assertThat(actual.getHeaders().getContentType()).isEqualTo(APPLICATION_JSON);
+			assertThat(actual.getHeaders().getFirst("X-Upstream-Internal")).isNull();
+			labelsServer.verify();
+		}
+
+		@Test
 		@DisplayName("When AI가 빈 suggestions를 반환하면 Then 정상 200 본문을 그대로 전달한다")
 		void relaysAnEmptySuggestionsResponse() throws Exception {
 			String response = readFixture("post_labels_suggest.200.empty.json");

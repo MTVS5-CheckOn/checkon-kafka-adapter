@@ -7,6 +7,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 import com.checkon.aiadapter.counsel.proxy.SynchronousProxyFailureResponse;
+import com.checkon.aiadapter.counsel.proxy.SynchronousProxySuccessResponse;
 
 final class RestCounselSynchronousProxy implements CounselSynchronousProxy {
 
@@ -51,7 +52,7 @@ final class RestCounselSynchronousProxy implements CounselSynchronousProxy {
 
 	private ResponseEntity<String> post(RestClient restClient, String path, String payload, Headers headers) {
 		try {
-			return restClient.post()
+			ResponseEntity<String> upstream = restClient.post()
 				.uri(path)
 				.header(TENANT_ID_HEADER, headers.tenantAlias())
 				.header(REQUEST_ID_HEADER, headers.requestId())
@@ -59,6 +60,7 @@ final class RestCounselSynchronousProxy implements CounselSynchronousProxy {
 				.body(payload)
 				.retrieve()
 				.toEntity(String.class);
+			return SynchronousProxySuccessResponse.from(upstream);
 		}
 		catch (RestClientResponseException exception) {
 			return ResponseEntity.status(exception.getStatusCode()).body(exception.getResponseBodyAsString());
