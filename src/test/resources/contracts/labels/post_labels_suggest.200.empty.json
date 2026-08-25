@@ -1,0 +1,11 @@
+{
+  "data": {"suggestions": []},
+  "error": null,
+  "meta": {
+    "execution_id": "00000000-0000-4000-8000-0000000000e1",
+    "versions": {
+      "pipeline":"0.1.0","engine":"labels-suggest-0.1","schema":"0.1","contract":"0.1",
+      "threshold":null,"prompt":"0.1","graph":null,"taxonomy":null,"verify_config":null,"difficulty_calib":null
+    }
+  }
+}

@@ -96,6 +96,14 @@ checkon:
       path: ${AI_CLASSIFY_PATH:/v1/classify}
       connect-timeout: ${AI_CLASSIFY_CONNECT_TIMEOUT:2s}
       read-timeout: ${AI_CLASSIFY_READ_TIMEOUT:10s}
+    label-confirmation:
+      base-url: ${AI_LABEL_CONFIRMATION_BASE_URL:http://localhost:8000}
+      label-suggest-path: ${AI_LABEL_SUGGEST_PATH:/v1/labels/suggest}
+      confirmations-path: ${AI_CONFIRMATIONS_PATH:/v1/confirmations}
+      connect-timeout: ${AI_LABEL_CONFIRMATION_CONNECT_TIMEOUT:2s}
+      # AI label suggest has a 20-second upstream ceiling. The Backend keeps
+      # a separate 30-second read budget, so the Adapter resolves first.
+      read-timeout: ${AI_LABEL_CONFIRMATION_READ_TIMEOUT:20s}
   kafka:
     problem-generation:
       enabled: ${PROBLEM_GENERATION_KAFKA_ENABLED:false}
