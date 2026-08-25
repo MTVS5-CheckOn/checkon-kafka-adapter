@@ -3,6 +3,7 @@ package com.checkon.aiadapter.counsel.classification;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.http.HttpMethod.POST;
 import static org.springframework.http.HttpStatus.BAD_GATEWAY;
+import static org.springframework.http.HttpStatus.GATEWAY_TIMEOUT;
 import static org.springframework.http.HttpStatus.OK;
 import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
@@ -17,6 +18,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 import java.io.IOException;
 import java.net.ConnectException;
+import java.net.http.HttpTimeoutException;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -53,7 +55,7 @@ class RestInquiryClassificationProxyTest {
 				.andExpect(header("X-Tenant-Id", "tn_0123456789abcdef0123456789abcdef"))
 				.andExpect(header("X-Request-Id", "req-2040"))
 				.andExpect(headerDoesNotExist("Idempotency-Key"))
-				.andExpect(content().json(payload))
+				.andExpect(content().string(payload))
 				.andRespond(withSuccess("{\"data\":{\"classified\":true}}", APPLICATION_JSON));
 
 			var response = proxy.classify(payload, new InquiryClassificationProxy.Headers(
@@ -84,6 +86,23 @@ class RestInquiryClassificationProxyTest {
 		}
 
 		@Test
+		@DisplayName("When AI가 classified=false를 반환하면 Then 상태와 원문 본문을 그대로 전달한다")
+		void relaysAnUnclassifiedResponseWithoutReserialization() {
+			String responseBody = "{\"data\":{\"classified\":false,\"fallback_reason\":\"tripwire_blocked\"}}";
+			server.expect(once(), requestTo(BASE_URL + "/v1/classify"))
+				.andRespond(withSuccess(responseBody, APPLICATION_JSON));
+
+			var response = proxy.classify(
+				"{\"inquiry_ref\":\"iq_205\",\"body_text\":\"문의\"}",
+				new InquiryClassificationProxy.Headers("tn_0123456789abcdef0123456789abcdef", "req-2051")
+			);
+
+			assertThat(response.getStatusCode()).isEqualTo(OK);
+			assertThat(response.getBody()).isEqualTo(responseBody);
+			server.verify();
+		}
+
+		@Test
 		@DisplayName("When AI에 연결할 수 없으면 Then 재시도 없이 502를 반환한다")
 		void mapsNetworkFailureToBadGateway() {
 			String payload = "{\"inquiry_ref\":\"iq_206\",\"body_text\":\"문의\"}";
@@ -99,6 +118,24 @@ class RestInquiryClassificationProxyTest {
 
 			assertThat(response.getStatusCode()).isEqualTo(BAD_GATEWAY);
 			assertThat(response.getBody()).contains("AI_UNAVAILABLE");
+			server.verify();
+		}
+
+		@Test
+		@DisplayName("When Adapter 읽기 타임아웃이 발생하면 Then 재시도 없이 504를 반환한다")
+		void mapsReadTimeoutToGatewayTimeout() {
+			server.expect(once(), requestTo(BASE_URL + "/v1/classify"))
+				.andRespond(request -> {
+					throw new IOException(new HttpTimeoutException("read timed out"));
+				});
+
+			var response = proxy.classify(
+				"{\"inquiry_ref\":\"iq_207\",\"body_text\":\"문의\"}",
+				new InquiryClassificationProxy.Headers("tn_0123456789abcdef0123456789abcdef", "req-2070")
+			);
+
+			assertThat(response.getStatusCode()).isEqualTo(GATEWAY_TIMEOUT);
+			assertThat(response.getBody()).isEqualTo("{\"error\":{\"code\":\"AI_TIMEOUT\"}}");
 			server.verify();
 		}
 	}

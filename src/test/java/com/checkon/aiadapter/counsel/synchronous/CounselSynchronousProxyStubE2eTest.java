@@ -40,15 +40,43 @@ class CounselSynchronousProxyStubE2eTest {
 
 	@DynamicPropertySource
 	static void aiProperties(DynamicPropertyRegistry registry) {
-		registry.add("checkon.ai.label-confirmation.base-url",
+		registry.add("checkon.ai.classify.base-url",
 			() -> "http://127.0.0.1:" + AI_STUB.getAddress().getPort());
-		registry.add("checkon.ai.label-confirmation.connect-timeout", () -> "1s");
-		registry.add("checkon.ai.label-confirmation.read-timeout", () -> "2s");
+		registry.add("checkon.ai.classify.connect-timeout", () -> "1s");
+		registry.add("checkon.ai.classify.read-timeout", () -> "2s");
+		registry.add("checkon.ai.labels.base-url",
+			() -> "http://127.0.0.1:" + AI_STUB.getAddress().getPort());
+		registry.add("checkon.ai.labels.connect-timeout", () -> "1s");
+		registry.add("checkon.ai.labels.read-timeout", () -> "2s");
 	}
 
 	@AfterAll
 	static void stopAiStub() {
 		AI_STUB.stop(0);
+	}
+
+	@Test
+	@DisplayName("Given Backend 분류 요청 When Adapter를 호출하면 Then AI Stub까지 헤더와 원문 본문이 보존된다")
+	void roundTripsClassificationOverRealHttp() throws Exception {
+		String request = "{\"inquiry_ref\":\"iq_204\",\"body_text\":\"여름방학 특강 시간표가 궁금합니다\"}";
+
+		var response = backendClient().post()
+			.uri("/v1/classify")
+			.header("X-Tenant-Id", TENANT)
+			.header("X-Request-Id", "req-classify-e2e-4999")
+			.contentType(MediaType.APPLICATION_JSON)
+			.body(request)
+			.retrieve()
+			.toEntity(String.class);
+		CapturedRequest captured = CAPTURED.poll(2, TimeUnit.SECONDS);
+
+		assertThat(response.getStatusCode().value()).isEqualTo(200);
+		assertThat(captured).isNotNull();
+		assertThat(captured.path()).isEqualTo("/v1/classify");
+		assertThat(captured.tenant()).isEqualTo(TENANT);
+		assertThat(captured.requestId()).isEqualTo("req-classify-e2e-4999");
+		assertThat(captured.idempotencyKey()).isNull();
+		assertThat(captured.body()).isEqualTo(request);
 	}
 
 	@Test
@@ -73,6 +101,31 @@ class CounselSynchronousProxyStubE2eTest {
 		assertThat(captured.tenant()).isEqualTo(TENANT);
 		assertThat(captured.requestId()).isEqualTo("req-label-e2e-5000");
 		assertThat(captured.idempotencyKey()).isNull();
+		assertThat(captured.body()).isEqualTo(request);
+	}
+
+	@Test
+	@DisplayName("Given Backend 분류 확정 When Adapter를 호출하면 Then classify AI confirmations 경로로 전달된다")
+	void roundTripsClassificationConfirmationOverRealHttp() throws Exception {
+		String request = """
+			{"kind":"classification","suggestion_id":"iq_204","action":"corrected",
+			 "corrected_value":{"topic":"counsel_request"}}
+			""";
+
+		var response = backendClient().post()
+			.uri("/v1/confirmations")
+			.header("X-Tenant-Id", TENANT)
+			.header("X-Request-Id", "req-confirm-classify-e2e-5001")
+			.contentType(MediaType.APPLICATION_JSON)
+			.body(request)
+			.retrieve()
+			.toEntity(String.class);
+		CapturedRequest captured = CAPTURED.poll(2, TimeUnit.SECONDS);
+
+		assertThat(response.getStatusCode().value()).isEqualTo(200);
+		assertThat(captured).isNotNull();
+		assertThat(captured.path()).isEqualTo("/v1/confirmations");
+		assertThat(captured.requestId()).isEqualTo("req-confirm-classify-e2e-5001");
 		assertThat(captured.body()).isEqualTo(request);
 	}
 
@@ -130,11 +183,15 @@ class CounselSynchronousProxyStubE2eTest {
 			body
 		));
 		String fixture = switch (path) {
+			case "/v1/classify" -> null;
 			case "/v1/labels/suggest" -> "post_labels_suggest.200.json";
 			case "/v1/confirmations" -> "confirmation-response-accepted.json";
 			default -> throw new IllegalArgumentException("unexpected AI path: " + path);
 		};
-		byte[] response = fixture(fixture).getBytes(StandardCharsets.UTF_8);
+		String responseBody = fixture == null
+			? "{\"data\":{\"classified\":true},\"error\":null,\"meta\":null}"
+			: fixture(fixture);
+		byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
 		exchange.getResponseHeaders().add(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
 		exchange.sendResponseHeaders(200, response.length);
 		exchange.getResponseBody().write(response);

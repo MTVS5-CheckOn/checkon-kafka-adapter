@@ -1,11 +1,12 @@
 package com.checkon.aiadapter.counsel.classification;
 
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
+
+import com.checkon.aiadapter.counsel.proxy.SynchronousProxyFailureResponse;
 
 final class RestInquiryClassificationProxy implements InquiryClassificationProxy {
 
@@ -39,8 +40,7 @@ final class RestInquiryClassificationProxy implements InquiryClassificationProxy
 			return ResponseEntity.status(exception.getStatusCode()).body(exception.getResponseBodyAsString());
 		}
 		catch (RestClientException exception) {
-			return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-				.body("{\"error\":{\"code\":\"AI_UNAVAILABLE\"}}");
+			return SynchronousProxyFailureResponse.from(exception);
 		}
 	}
 }
