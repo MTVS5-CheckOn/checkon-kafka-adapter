@@ -8,6 +8,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+
 @RestController
 class CounselSynchronousProxyController {
 
@@ -16,9 +19,11 @@ class CounselSynchronousProxyController {
 	private static final String INVALID_REQUEST = "{\"error\":{\"code\":\"INVALID_REQUEST\"}}";
 
 	private final CounselSynchronousProxy proxy;
+	private final ObjectMapper objectMapper;
 
-	CounselSynchronousProxyController(CounselSynchronousProxy proxy) {
+	CounselSynchronousProxyController(CounselSynchronousProxy proxy, ObjectMapper objectMapper) {
 		this.proxy = proxy;
+		this.objectMapper = objectMapper;
 	}
 
 	@PostMapping("/v1/labels/suggest")
@@ -42,7 +47,18 @@ class CounselSynchronousProxyController {
 		if (!valid(tenantAlias, requestId, payload)) {
 			return ResponseEntity.badRequest().body(INVALID_REQUEST);
 		}
-		return proxy.confirm(payload, new CounselSynchronousProxy.Headers(tenantAlias, requestId));
+		CounselSynchronousProxy.Headers headers = new CounselSynchronousProxy.Headers(tenantAlias, requestId);
+		try {
+			String kind = objectMapper.readTree(payload).path("kind").textValue();
+			return switch (kind == null ? "" : kind) {
+				case "classification" -> proxy.confirmClassification(payload, headers);
+				case "label" -> proxy.confirmLabel(payload, headers);
+				default -> ResponseEntity.badRequest().body(INVALID_REQUEST);
+			};
+		}
+		catch (JacksonException exception) {
+			return ResponseEntity.badRequest().body(INVALID_REQUEST);
+		}
 	}
 
 	private static boolean valid(String tenantAlias, String requestId, String payload) {

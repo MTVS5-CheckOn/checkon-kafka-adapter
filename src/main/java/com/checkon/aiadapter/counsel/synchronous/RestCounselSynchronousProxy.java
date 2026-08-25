@@ -1,38 +1,55 @@
 package com.checkon.aiadapter.counsel.synchronous;
 
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
+
+import com.checkon.aiadapter.counsel.proxy.SynchronousProxyFailureResponse;
 
 final class RestCounselSynchronousProxy implements CounselSynchronousProxy {
 
 	private static final String TENANT_ID_HEADER = "X-Tenant-Id";
 	private static final String REQUEST_ID_HEADER = "X-Request-Id";
 
-	private final RestClient restClient;
+	private final RestClient classificationRestClient;
+	private final RestClient labelsRestClient;
 	private final String labelSuggestPath;
-	private final String confirmationsPath;
+	private final String classificationConfirmationsPath;
+	private final String labelConfirmationsPath;
 
-	RestCounselSynchronousProxy(RestClient restClient, String labelSuggestPath, String confirmationsPath) {
-		this.restClient = restClient;
+	RestCounselSynchronousProxy(
+		RestClient classificationRestClient,
+		String classificationConfirmationsPath,
+		RestClient labelsRestClient,
+		String labelSuggestPath,
+		String labelConfirmationsPath
+	) {
+		this.classificationRestClient = classificationRestClient;
+		this.labelsRestClient = labelsRestClient;
 		this.labelSuggestPath = requirePath(labelSuggestPath, "labelSuggestPath");
-		this.confirmationsPath = requirePath(confirmationsPath, "confirmationsPath");
+		this.classificationConfirmationsPath = requirePath(
+			classificationConfirmationsPath, "classificationConfirmationsPath");
+		this.labelConfirmationsPath = requirePath(labelConfirmationsPath, "labelConfirmationsPath");
 	}
 
 	@Override
 	public ResponseEntity<String> suggestLabels(String payload, Headers headers) {
-		return post(labelSuggestPath, payload, headers);
+		return post(labelsRestClient, labelSuggestPath, payload, headers);
 	}
 
 	@Override
-	public ResponseEntity<String> confirm(String payload, Headers headers) {
-		return post(confirmationsPath, payload, headers);
+	public ResponseEntity<String> confirmClassification(String payload, Headers headers) {
+		return post(classificationRestClient, classificationConfirmationsPath, payload, headers);
 	}
 
-	private ResponseEntity<String> post(String path, String payload, Headers headers) {
+	@Override
+	public ResponseEntity<String> confirmLabel(String payload, Headers headers) {
+		return post(labelsRestClient, labelConfirmationsPath, payload, headers);
+	}
+
+	private ResponseEntity<String> post(RestClient restClient, String path, String payload, Headers headers) {
 		try {
 			return restClient.post()
 				.uri(path)
@@ -47,8 +64,7 @@ final class RestCounselSynchronousProxy implements CounselSynchronousProxy {
 			return ResponseEntity.status(exception.getStatusCode()).body(exception.getResponseBodyAsString());
 		}
 		catch (RestClientException exception) {
-			return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-				.body("{\"error\":{\"code\":\"AI_UNAVAILABLE\"}}");
+			return SynchronousProxyFailureResponse.from(exception);
 		}
 	}
 

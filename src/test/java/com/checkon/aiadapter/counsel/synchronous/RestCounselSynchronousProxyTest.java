@@ -3,6 +3,7 @@ package com.checkon.aiadapter.counsel.synchronous;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.http.HttpMethod.POST;
 import static org.springframework.http.HttpStatus.BAD_GATEWAY;
+import static org.springframework.http.HttpStatus.GATEWAY_TIMEOUT;
 import static org.springframework.http.HttpStatus.OK;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.client.ExpectedCount.once;
@@ -16,6 +17,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 import java.io.IOException;
 import java.net.ConnectException;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.stream.Stream;
 
@@ -33,17 +35,24 @@ import org.springframework.web.client.RestClient;
 @DisplayName("라벨 제안과 공용 확정 HTTP 프록시")
 class RestCounselSynchronousProxyTest {
 
-	private static final String BASE_URL = "http://ai.example.test";
+	private static final String CLASSIFY_BASE_URL = "http://classify-ai.example.test";
+	private static final String LABELS_BASE_URL = "http://labels-ai.example.test";
 	private static final String TENANT = "tn_0123456789abcdef0123456789abcdef";
 
-	private MockRestServiceServer server;
+	private MockRestServiceServer classifyServer;
+	private MockRestServiceServer labelsServer;
 	private RestCounselSynchronousProxy proxy;
 
 	@BeforeEach
 	void setUp() {
-		RestClient.Builder builder = RestClient.builder().baseUrl(BASE_URL);
-		server = MockRestServiceServer.bindTo(builder).build();
-		proxy = new RestCounselSynchronousProxy(builder.build(), "/v1/labels/suggest", "/v1/confirmations");
+		RestClient.Builder classifyBuilder = RestClient.builder().baseUrl(CLASSIFY_BASE_URL);
+		RestClient.Builder labelsBuilder = RestClient.builder().baseUrl(LABELS_BASE_URL);
+		classifyServer = MockRestServiceServer.bindTo(classifyBuilder).build();
+		labelsServer = MockRestServiceServer.bindTo(labelsBuilder).build();
+		proxy = new RestCounselSynchronousProxy(
+			classifyBuilder.build(), "/v1/confirmations",
+			labelsBuilder.build(), "/v1/labels/suggest", "/v1/confirmations"
+		);
 	}
 
 	@Nested
@@ -55,53 +64,53 @@ class RestCounselSynchronousProxyTest {
 		void forwardsTheCompleteBackendFixture() throws Exception {
 			String request = readFixture("post_labels_suggest.request.json");
 			String response = readFixture("post_labels_suggest.200.json");
-			server.expect(once(), requestTo(BASE_URL + "/v1/labels/suggest"))
+			labelsServer.expect(once(), requestTo(LABELS_BASE_URL + "/v1/labels/suggest"))
 				.andExpect(method(POST))
 				.andExpect(header("X-Tenant-Id", TENANT))
 				.andExpect(header("X-Request-Id", "req-label-3000"))
 				.andExpect(headerDoesNotExist("Idempotency-Key"))
-				.andExpect(content().json(request))
+				.andExpect(content().string(request))
 				.andRespond(withSuccess(response, APPLICATION_JSON));
 
 			var actual = proxy.suggestLabels(request, headers("req-label-3000"));
 
 			assertThat(actual.getStatusCode()).isEqualTo(OK);
 			assertThat(actual.getBody()).isEqualTo(response);
-			server.verify();
+			labelsServer.verify();
 		}
 
 		@Test
 		@DisplayName("When AI가 빈 suggestions를 반환하면 Then 정상 200 본문을 그대로 전달한다")
 		void relaysAnEmptySuggestionsResponse() throws Exception {
 			String response = readFixture("post_labels_suggest.200.empty.json");
-			server.expect(once(), requestTo(BASE_URL + "/v1/labels/suggest"))
+			labelsServer.expect(once(), requestTo(LABELS_BASE_URL + "/v1/labels/suggest"))
 				.andRespond(withSuccess(response, APPLICATION_JSON));
 
 			var actual = proxy.suggestLabels(readFixture("post_labels_suggest.request.json"), headers("req-empty-3001"));
 
 			assertThat(actual.getStatusCode()).isEqualTo(OK);
 			assertThat(actual.getBody()).isEqualTo(response);
-			server.verify();
+			labelsServer.verify();
 		}
 
 		@ParameterizedTest(name = "When AI가 {0}을 반환하면 Then 상태와 전체 본문을 그대로 전달한다")
 		@MethodSource("com.checkon.aiadapter.counsel.synchronous.RestCounselSynchronousProxyTest#errorResponses")
 		void relaysEveryContractError(int status, String fixture) throws Exception {
 			String response = readFixture(fixture);
-			server.expect(once(), requestTo(BASE_URL + "/v1/labels/suggest"))
+			labelsServer.expect(once(), requestTo(LABELS_BASE_URL + "/v1/labels/suggest"))
 				.andRespond(withStatus(HttpStatus.valueOf(status)).contentType(APPLICATION_JSON).body(response));
 
 			var actual = proxy.suggestLabels(readFixture("post_labels_suggest.request.json"), headers("req-error-3002"));
 
 			assertThat(actual.getStatusCode().value()).isEqualTo(status);
 			assertThat(actual.getBody()).isEqualTo(response);
-			server.verify();
+			labelsServer.verify();
 		}
 
 		@Test
 		@DisplayName("When AI 연결이 실패하면 Then 한 번만 호출하고 502 AI_UNAVAILABLE로 변환한다")
 		void mapsConnectionFailureWithoutRetry() throws Exception {
-			server.expect(once(), requestTo(BASE_URL + "/v1/labels/suggest"))
+			labelsServer.expect(once(), requestTo(LABELS_BASE_URL + "/v1/labels/suggest"))
 				.andRespond(request -> {
 					throw new IOException(new ConnectException("connection refused"));
 				});
@@ -110,7 +119,22 @@ class RestCounselSynchronousProxyTest {
 
 			assertThat(actual.getStatusCode()).isEqualTo(BAD_GATEWAY);
 			assertThat(actual.getBody()).isEqualTo("{\"error\":{\"code\":\"AI_UNAVAILABLE\"}}");
-			server.verify();
+			labelsServer.verify();
+		}
+
+		@Test
+		@DisplayName("When Adapter 읽기 타임아웃이 발생하면 Then 한 번만 호출하고 504 AI_TIMEOUT을 반환한다")
+		void mapsReadTimeoutWithoutRetry() throws Exception {
+			labelsServer.expect(once(), requestTo(LABELS_BASE_URL + "/v1/labels/suggest"))
+				.andRespond(request -> {
+					throw new IOException(new HttpTimeoutException("read timed out"));
+				});
+
+			var actual = proxy.suggestLabels(readFixture("post_labels_suggest.request.json"), headers("req-timeout-3004"));
+
+			assertThat(actual.getStatusCode()).isEqualTo(GATEWAY_TIMEOUT);
+			assertThat(actual.getBody()).isEqualTo("{\"error\":{\"code\":\"AI_TIMEOUT\"}}");
+			labelsServer.verify();
 		}
 	}
 
@@ -119,8 +143,8 @@ class RestCounselSynchronousProxyTest {
 	class GivenForwardingConfirmations {
 
 		@Test
-		@DisplayName("When classification과 label을 보내면 Then 같은 AI 경로에 각각 한 번 전달한다")
-		void forwardsBothKindsToTheSharedPath() throws Exception {
+		@DisplayName("When classification과 label을 보내면 Then kind별 AI 설정에 원문 그대로 각각 전달한다")
+		void forwardsBothKindsToTheirConfiguredAiServers() throws Exception {
 			String classification = """
 				{"kind":"classification","suggestion_id":"iq_204","action":"corrected",
 				 "corrected_value":{"topic":"counsel_request"}}
@@ -129,46 +153,48 @@ class RestCounselSynchronousProxyTest {
 				{"kind":"label","suggestion_id":"gd_11b0:comm:data","action":"confirmed"}
 				""";
 			String accepted = readFixture("confirmation-response-accepted.json");
-			server.expect(once(), requestTo(BASE_URL + "/v1/confirmations"))
+			classifyServer.expect(once(), requestTo(CLASSIFY_BASE_URL + "/v1/confirmations"))
 				.andExpect(method(POST))
 				.andExpect(header("X-Tenant-Id", TENANT))
 				.andExpect(header("X-Request-Id", "req-classification-4000"))
 				.andExpect(headerDoesNotExist("Idempotency-Key"))
-				.andExpect(content().json(classification))
+				.andExpect(content().string(classification))
 				.andRespond(withSuccess(accepted, APPLICATION_JSON));
-			server.expect(once(), requestTo(BASE_URL + "/v1/confirmations"))
+			labelsServer.expect(once(), requestTo(LABELS_BASE_URL + "/v1/confirmations"))
 				.andExpect(method(POST))
 				.andExpect(header("X-Tenant-Id", TENANT))
 				.andExpect(header("X-Request-Id", "req-label-4001"))
 				.andExpect(headerDoesNotExist("Idempotency-Key"))
-				.andExpect(content().json(label))
+				.andExpect(content().string(label))
 				.andRespond(withSuccess(accepted, APPLICATION_JSON));
 
-			var classificationResponse = proxy.confirm(classification, headers("req-classification-4000"));
-			var labelResponse = proxy.confirm(label, headers("req-label-4001"));
+			var classificationResponse = proxy.confirmClassification(
+				classification, headers("req-classification-4000"));
+			var labelResponse = proxy.confirmLabel(label, headers("req-label-4001"));
 
 			assertThat(classificationResponse.getStatusCode()).isEqualTo(OK);
 			assertThat(labelResponse.getStatusCode()).isEqualTo(OK);
 			assertThat(classificationResponse.getBody()).isEqualTo(accepted);
 			assertThat(labelResponse.getBody()).isEqualTo(accepted);
-			server.verify();
+			classifyServer.verify();
+			labelsServer.verify();
 		}
 
 		@Test
 		@DisplayName("When label 확정이 504이면 Then 재전송하지 않고 상태와 본문을 그대로 전달한다")
 		void doesNotRetryANonIdempotentLabelConfirmation() throws Exception {
 			String response = readFixture("post_labels_suggest.504.timeout.json");
-			server.expect(once(), requestTo(BASE_URL + "/v1/confirmations"))
+			labelsServer.expect(once(), requestTo(LABELS_BASE_URL + "/v1/confirmations"))
 				.andRespond(withStatus(HttpStatus.GATEWAY_TIMEOUT).contentType(APPLICATION_JSON).body(response));
 
-			var actual = proxy.confirm(
+			var actual = proxy.confirmLabel(
 				"{\"kind\":\"label\",\"suggestion_id\":\"gd_11b0:comm:data\",\"action\":\"confirmed\"}",
 				headers("req-label-timeout")
 			);
 
 			assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.GATEWAY_TIMEOUT);
 			assertThat(actual.getBody()).isEqualTo(response);
-			server.verify();
+			labelsServer.verify();
 		}
 	}
 

@@ -18,6 +18,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import tools.jackson.databind.ObjectMapper;
+
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
@@ -33,7 +35,9 @@ class CounselSynchronousProxyControllerTest {
 	@BeforeEach
 	void setUp() {
 		proxy = new RecordingProxy();
-		mockMvc = MockMvcBuilders.standaloneSetup(new CounselSynchronousProxyController(proxy)).build();
+		mockMvc = MockMvcBuilders.standaloneSetup(
+			new CounselSynchronousProxyController(proxy, new ObjectMapper())
+		).build();
 	}
 
 	@Nested
@@ -65,6 +69,19 @@ class CounselSynchronousProxyControllerTest {
 					.header("X-Tenant-Id", TENANT)
 					.contentType(APPLICATION_JSON)
 					.content(readFixture("post_labels_suggest.request.json")))
+				.andExpect(status().isBadRequest());
+
+			assertThat(proxy.totalCalls()).isZero();
+		}
+
+		@Test
+		@DisplayName("When 본문이 비어 있으면 Then 400이고 AI를 호출하지 않는다")
+		void rejectsAnEmptyBody() throws Exception {
+			mockMvc.perform(post("/v1/labels/suggest")
+					.header("X-Tenant-Id", TENANT)
+					.header("X-Request-Id", "req-label-empty")
+					.contentType(APPLICATION_JSON)
+					.content(""))
 				.andExpect(status().isBadRequest());
 
 			assertThat(proxy.totalCalls()).isZero();
@@ -104,18 +121,26 @@ class CounselSynchronousProxyControllerTest {
 		@Test
 		@DisplayName("When 분류 확정 본문이 유효하면 Then 공용 확정 프록시에 한 번 전달한다")
 		void delegatesAClassificationConfirmation() throws Exception {
-			assertConfirmationDelegated("""
+			String payload = """
 				{"kind":"classification","suggestion_id":"iq_204","action":"corrected",
 				 "corrected_value":{"topic":"counsel_request"}}
-				""", "req-confirm-classification");
+				""";
+			assertConfirmationDelegated(payload, "req-confirm-classification");
+			assertThat(proxy.classificationConfirmationCalls).isEqualTo(1);
+			assertThat(proxy.labelConfirmationCalls).isZero();
+			assertThat(proxy.payload).isEqualTo(payload);
 		}
 
 		@Test
 		@DisplayName("When 라벨 확정 본문이 유효하면 Then 같은 공용 확정 프록시에 한 번 전달한다")
 		void delegatesALabelConfirmation() throws Exception {
-			assertConfirmationDelegated("""
+			String payload = """
 				{"kind":"label","suggestion_id":"gd_11b0:comm:data","action":"confirmed"}
-				""", "req-confirm-label");
+				""";
+			assertConfirmationDelegated(payload, "req-confirm-label");
+			assertThat(proxy.classificationConfirmationCalls).isZero();
+			assertThat(proxy.labelConfirmationCalls).isEqualTo(1);
+			assertThat(proxy.payload).isEqualTo(payload);
 		}
 
 		@Test
@@ -144,6 +169,35 @@ class CounselSynchronousProxyControllerTest {
 			assertThat(proxy.totalCalls()).isZero();
 		}
 
+		@Test
+		@DisplayName("When kind가 누락되거나 지원하지 않으면 Then 400이고 AI를 호출하지 않는다")
+		void rejectsMissingAndUnsupportedKindsWithoutCallingAi() throws Exception {
+			for (String payload : new String[] {"{\"suggestion_id\":\"iq_204\"}", "{\"kind\":\"draft\"}"}) {
+				mockMvc.perform(post("/v1/confirmations")
+						.header("X-Tenant-Id", TENANT)
+						.header("X-Request-Id", "req-invalid-kind")
+						.contentType(APPLICATION_JSON)
+						.content(payload))
+					.andExpect(status().isBadRequest())
+					.andExpect(content().json("{\"error\":{\"code\":\"INVALID_REQUEST\"}}"));
+			}
+
+			assertThat(proxy.totalCalls()).isZero();
+		}
+
+		@Test
+		@DisplayName("When JSON이 잘못되면 Then 400이고 AI를 호출하지 않는다")
+		void rejectsMalformedJsonWithoutCallingAi() throws Exception {
+			mockMvc.perform(post("/v1/confirmations")
+					.header("X-Tenant-Id", TENANT)
+					.header("X-Request-Id", "req-malformed-json")
+					.contentType(APPLICATION_JSON)
+					.content("{\"kind\":"))
+				.andExpect(status().isBadRequest());
+
+			assertThat(proxy.totalCalls()).isZero();
+		}
+
 		private void assertConfirmationDelegated(String payload, String requestId) throws Exception {
 			mockMvc.perform(post("/v1/confirmations")
 					.header("X-Tenant-Id", TENANT)
@@ -153,8 +207,6 @@ class CounselSynchronousProxyControllerTest {
 				.andExpect(status().isOk())
 				.andExpect(content().json("{\"data\":{\"accepted\":true}}"));
 
-			assertThat(proxy.confirmationCalls).isEqualTo(1);
-			assertThat(proxy.payload).isEqualTo(payload);
 			assertThat(proxy.headers).isEqualTo(new CounselSynchronousProxy.Headers(TENANT, requestId));
 		}
 	}
@@ -169,7 +221,8 @@ class CounselSynchronousProxyControllerTest {
 
 	private static final class RecordingProxy implements CounselSynchronousProxy {
 		private int labelSuggestCalls;
-		private int confirmationCalls;
+		private int classificationConfirmationCalls;
+		private int labelConfirmationCalls;
 		private String payload;
 		private Headers headers;
 
@@ -182,15 +235,23 @@ class CounselSynchronousProxyControllerTest {
 		}
 
 		@Override
-		public ResponseEntity<String> confirm(String payload, Headers headers) {
-			confirmationCalls++;
+		public ResponseEntity<String> confirmClassification(String payload, Headers headers) {
+			classificationConfirmationCalls++;
+			this.payload = payload;
+			this.headers = headers;
+			return ResponseEntity.ok("{\"data\":{\"accepted\":true}}");
+		}
+
+		@Override
+		public ResponseEntity<String> confirmLabel(String payload, Headers headers) {
+			labelConfirmationCalls++;
 			this.payload = payload;
 			this.headers = headers;
 			return ResponseEntity.ok("{\"data\":{\"accepted\":true}}");
 		}
 
 		private int totalCalls() {
-			return labelSuggestCalls + confirmationCalls;
+			return labelSuggestCalls + classificationConfirmationCalls + labelConfirmationCalls;
 		}
 	}
 }

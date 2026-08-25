@@ -15,9 +15,9 @@ class InquiryClassificationProxyConfiguration {
 	@Bean
 	InquiryClassificationProxy inquiryClassificationProxy(
 		@Value("${checkon.ai.classify.base-url:http://localhost:8000}") String baseUrl,
-		@Value("${checkon.ai.classify.path:/v1/classify}") String classifyPath,
+		@Value("${checkon.ai.classify.classify-path:/v1/classify}") String classifyPath,
 		@Value("${checkon.ai.classify.connect-timeout:2s}") Duration connectTimeout,
-		@Value("${checkon.ai.classify.read-timeout:10s}") Duration readTimeout
+		@Value("${checkon.ai.classify.read-timeout:30s}") Duration readTimeout
 	) {
 		HttpClient httpClient = HttpClient.newBuilder().connectTimeout(connectTimeout).build();
 		JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
