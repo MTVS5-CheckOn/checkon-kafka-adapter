@@ -91,6 +91,11 @@ checkon:
       # 않도록 450초보다 여유 있게 둔다.
       max-elapsed: ${AI_COUNSEL_DRAFT_MAX_ELAPSED:8m}
       max-attempts: ${AI_COUNSEL_DRAFT_MAX_ATTEMPTS:3}
+    classify:
+      base-url: ${AI_CLASSIFY_BASE_URL:http://localhost:8000}
+      path: ${AI_CLASSIFY_PATH:/v1/classify}
+      connect-timeout: ${AI_CLASSIFY_CONNECT_TIMEOUT:2s}
+      read-timeout: ${AI_CLASSIFY_READ_TIMEOUT:10s}
   kafka:
     problem-generation:
       enabled: ${PROBLEM_GENERATION_KAFKA_ENABLED:false}
