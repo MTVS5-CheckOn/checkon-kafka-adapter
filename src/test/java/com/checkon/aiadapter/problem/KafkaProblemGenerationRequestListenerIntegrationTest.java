@@ -33,6 +33,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.kafka.KafkaContainer;
 
 import com.checkon.aiadapter.problem.application.ProblemGenerationRequestHandler;
+import com.checkon.aiadapter.problem.application.ProblemGenerationRevisionRequestHandler;
 
 @Testcontainers
 @SpringBootTest(properties = {
@@ -54,11 +55,12 @@ class KafkaProblemGenerationRequestListenerIntegrationTest {
 
 	@Autowired KafkaTemplate<String, String> kafka;
 	@MockitoBean ProblemGenerationRequestHandler handler;
+	@MockitoBean ProblemGenerationRevisionRequestHandler revisionHandler;
 
 	@Test
-	@DisplayName("Given 유효한 pg-child-request-1 When 수신하면 Then child 식별자를 보존해 handler에 전달한다")
+	@DisplayName("Given 유효한 pg-child-request-2 When 수신하면 Then child 식별자를 보존해 handler에 전달한다")
 	void consumesValidChildRequest() throws Exception {
-		String event = event("pg-child-request-1");
+		String event = event("pg-child-request-2");
 
 		kafka.send(TOPIC, TENANT, event).get(10, TimeUnit.SECONDS);
 
@@ -71,7 +73,7 @@ class KafkaProblemGenerationRequestListenerIntegrationTest {
 	@Test
 	@DisplayName("Given 잘못된 child schema When 수신하면 Then 재시도 없이 DLT로 격리한다")
 	void routesInvalidContractToDlt() throws Exception {
-		String invalid = event("pg-child-request-2");
+		String invalid = event("pg-child-request-3");
 		ConsumerRecord<String, String> record;
 		try (KafkaConsumer<String, String> consumer = consumer()) {
 			consumer.subscribe(List.of(DLT));
@@ -81,8 +83,23 @@ class KafkaProblemGenerationRequestListenerIntegrationTest {
 
 		assertThat(record).isNotNull();
 		assertThat(record.key()).isEqualTo(TENANT);
-		assertThat(record.value()).contains("pg-child-request-2");
+		assertThat(record.value()).contains("pg-child-request-3");
 		verifyNoInteractions(handler);
+	}
+
+	@Test
+	@DisplayName("Given 유효한 revision 요청 When 같은 Kafka topic으로 수신하면 Then 생성 handler와 분리해 전달한다")
+	void routesRevisionRequestToDedicatedHandler() throws Exception {
+		// Given
+		String event=revisionEvent();
+
+		// When
+		kafka.send(TOPIC,TENANT,event).get(10,TimeUnit.SECONDS);
+
+		// Then
+		verify(revisionHandler,timeout(15_000)).handle(
+			org.mockito.ArgumentMatchers.argThat(value->value.slotIndex()==0&&value.setId().equals("set-1")),
+			org.mockito.ArgumentMatchers.eq(event));
 	}
 
 	private KafkaConsumer<String, String> consumer() {
@@ -115,6 +132,16 @@ class KafkaProblemGenerationRequestListenerIntegrationTest {
 			  "type_tags":["infer"],"item_format":"mcq","count":1}}}
 			""".formatted(TENANT, schema);
 	}
+
+	private String revisionEvent(){return """
+		{"event_id":"01980000-0000-7000-8000-000000000031","event_type":"problem_generation.revision.requested",
+		 "occurred_at":"2026-08-23T00:00:00Z","tenant_id":"%s","schema_version":"pg-revision-request-1",
+		 "correlation_id":"01980000-0000-7000-8000-000000000002","payload":{
+		 "request_id":"01980000-0000-7000-8000-000000000002","problem_execution_id":"01980000-0000-7000-8000-000000000003",
+		 "revision_request_id":"01980000-0000-7000-8000-000000000032","set_id":"set-1","slot_index":0,
+		 "base_revision_no":0,"revision_kind":"ai_refine","instruction":"문두 수정",
+		 "idempotency_key":"problem-revision:01980000-0000-7000-8000-000000000032"}}
+		""".formatted(TENANT);}
 
 	@TestConfiguration(proxyBeanMethods = false)
 	static class Topics {

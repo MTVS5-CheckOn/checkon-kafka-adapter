@@ -59,6 +59,14 @@ public class HttpAiProblemClient implements AiProblemClient {
 			.headers(http->headers(http,headers,false)).retrieve().body(ProblemItemDetailResponse.class));
 	}
 
+	@Override
+	public ProblemRevisionResponse revise(String setId,int slotIndex,String requestBody,Headers headers) {
+		return exchange("revision",()->restClient.post().uri(path+"/{setId}/items/{slotIndex}/revisions",setId,slotIndex)
+			.headers(http->headers(http,headers,true)).contentType(MediaType.APPLICATION_JSON)
+			.contentLength(requestBody.getBytes(StandardCharsets.UTF_8).length).body(requestBody)
+			.retrieve().body(ProblemRevisionResponse.class));
+	}
+
 	private static void headers(org.springframework.http.HttpHeaders http, Headers value, boolean idempotent) {
 		http.set("X-Tenant-Id", value.tenantAlias());
 		http.set("X-Request-Id", value.requestId());
@@ -85,25 +93,24 @@ public class HttpAiProblemClient implements AiProblemClient {
 	}
 	private static <T> T validate(T response) { if(response==null) throw new AiProblemClientException("AI_EMPTY_RESPONSE",true,null); return response; }
 	private AiProblemClientException translated(RestClientResponseException exception) { int status=exception.getStatusCode().value();
-		return new AiProblemClientException(errorCode(status,exception.getResponseBodyAsString()),status==408||status==429||status>=500,exception); }
+		Error error=error(status,exception.getResponseBodyAsString());
+		return new AiProblemClientException(error.code(),status==408||status==429||status>=500,
+			error.reason(),error.currentRevisionNo(),exception); }
 	private static Duration retryAfter(String value) { if(value==null||value.isBlank()) return null;
 		try { long seconds=Long.parseLong(value.trim()); return seconds>0?Duration.ofSeconds(seconds):null; }
 		catch(NumberFormatException ignored){ return null; } }
 
-	private String errorCode(int status, String responseBody) {
-		if (status == 409) return "IDEMPOTENCY_CONFLICT";
-		if (status == 404) {
-			try {
-				JsonNode reason = objectMapper.readTree(responseBody).path("error").path("detail").get("reason");
-				if (reason != null && reason.isTextual()
-					&& "result_unavailable_after_restart".equals(reason.asText())) {
-					return reason.asText();
-				}
-			}
-			catch (RuntimeException ignored) {
-				// Fall through to the stable HTTP status code for malformed or non-JSON error bodies.
-			}
+	private Error error(int status,String responseBody) {
+		try {
+			JsonNode error=objectMapper.readTree(responseBody).path("error");
+			String code=error.path("code").isTextual()?error.path("code").asText():null;
+			JsonNode detail=error.path("detail"); String reason=detail.path("reason").isTextual()?detail.path("reason").asText():null;
+			Integer current=detail.path("current_revision_no").canConvertToInt()?detail.path("current_revision_no").asInt():null;
+			if(status==404&&"result_unavailable_after_restart".equals(reason)) code=reason;
+			if(code==null||code.isBlank()) code=status==409?"IDEMPOTENCY_CONFLICT":"AI_HTTP_"+status;
+			return new Error(code,reason,current);
 		}
-		return "AI_HTTP_" + status;
+		catch(RuntimeException ignored){return new Error(status==409?"IDEMPOTENCY_CONFLICT":"AI_HTTP_"+status,null,null);}
 	}
+	private record Error(String code,String reason,Integer currentRevisionNo) { }
 }

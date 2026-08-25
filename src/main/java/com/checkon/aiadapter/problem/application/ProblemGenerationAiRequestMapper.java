@@ -41,7 +41,45 @@ public class ProblemGenerationAiRequestMapper {
 			if(!target.isTextual()||!target.asText().matches("[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}")||!unique.add(target.asText()))
 				throw unsupported("manual_targets contains an invalid or duplicate node ID");
 		}
+		String area=request.path("area_tag").asText();
+		if(!java.util.Set.of("language","reading","literature","speech_writing","media").contains(area))
+			throw unsupported("area_tag is not supported");
+		JsonNode passage=request.get("passage");
+		JsonNode work=request.get("work_selection");
+		if("language".equals(area)&&(present(passage)||present(work)))
+			throw unsupported("language does not accept source material");
+		if("reading".equals(area)) validateReading(passage,work);
+		if("literature".equals(area)) validateLiterature(passage,work);
+		if("speech_writing".equals(area)||"media".equals(area)) validateSource(area,passage,work);
 	}
+
+	private static void validateReading(JsonNode passage,JsonNode work) {
+		if(!object(passage)||present(work)||!"reading".equals(passage.path("area_tag").asText())
+			||!java.util.Set.of("humanities","social","science","tech","art","fusion").contains(passage.path("domain").asText())
+			||!java.util.Set.of("basic","standard","advanced").contains(passage.path("sentence_complexity").asText())
+			||passage.path("word_count").asInt(0)<1||passage.path("paragraph_count").asInt(0)<2
+			||passage.path("paragraph_count").asInt()>6||!"pg-banned-v1".equals(passage.path("banned_topics_version").asText()))
+			throw unsupported("reading source contract is invalid");
+	}
+
+	private static void validateLiterature(JsonNode passage,JsonNode work) {
+		if(present(passage)||!object(work)
+			||!java.util.Set.of("classical_poetry","modern_poetry","modern_novel").contains(work.path("genre").asText())
+			||!work.path("concept_keywords").isArray())
+			throw unsupported("literature work_selection contract is invalid");
+	}
+
+	private static void validateSource(String area,JsonNode passage,JsonNode work) {
+		java.util.Set<String> kinds="media".equals(area)?java.util.Set.of("single","paired"):
+			java.util.Set.of("presentation","writing_draft","writing_sources");
+		if(!object(passage)||present(work)||!area.equals(passage.path("area_tag").asText())
+			||!kinds.contains(passage.path("source_kind").asText())
+			||!"pg-banned-v1".equals(passage.path("banned_topics_version").asText()))
+			throw unsupported(area+" source contract is invalid");
+	}
+
+	private static boolean object(JsonNode value){return value!=null&&value.isObject();}
+	private static boolean present(JsonNode value){return value!=null&&!value.isNull();}
 
 	private static ProblemGenerationMappingException unsupported(String message) {
 		return new ProblemGenerationMappingException("NO_EVIDENCE_READY_TARGET", message);

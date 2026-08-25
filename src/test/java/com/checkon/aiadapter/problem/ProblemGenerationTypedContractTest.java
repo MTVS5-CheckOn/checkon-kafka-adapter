@@ -29,10 +29,10 @@ class ProblemGenerationTypedContractTest {
 		// Given
 		var factory=new ProblemGenerationOutcomeFactory(JsonMapper.builder().findAndAddModules().build());
 		var summary=new ProblemItemSetResponse(new ProblemItemSetResponse.Data("job","set",List.of(
-			new ProblemItemSetResponse.ItemSummary(0,null,"dropped","x",null),
-			new ProblemItemSetResponse.ItemSummary(0,null,"dropped","x",null)),Map.of("dropped",2)),null);
+			new ProblemItemSetResponse.ItemSummary(0,null,"dropped",0,"x",null),
+			new ProblemItemSetResponse.ItemSummary(0,null,"dropped",0,"x",null)),Map.of("dropped",2)),null);
 		var job=new ProblemJobResponse(new ProblemJobResponse.Data("job",ProblemJobResponse.JobStatus.SUCCEEDED,
-			new ProblemJobResponse.Result("set")),null);
+			new ProblemJobResponse.Result("set",null,null,null,null,null,null,null)),null);
 		// When/Then
 		assertThatThrownBy(()->factory.succeeded(UUID.randomUUID(),request(),"job",job,summary,List.of(),Instant.now()))
 			.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("duplicate slot_index");

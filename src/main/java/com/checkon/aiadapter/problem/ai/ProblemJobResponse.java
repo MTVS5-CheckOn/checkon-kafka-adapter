@@ -5,10 +5,16 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 public record ProblemJobResponse(Data data, Meta meta) {
 	public record Data(@JsonProperty("job_id") String jobId, JobStatus status, Result result) { }
-	public record Result(@JsonProperty("set_id") String setId) { }
+	public record Result(@JsonProperty("set_id") String setId, String status,
+		@JsonProperty("requested_count") Integer requestedCount,
+		@JsonProperty("processed_count") Integer processedCount,
+		@JsonProperty("unstarted_count") Integer unstartedCount,
+		@JsonProperty("status_counts") java.util.Map<String,Integer> statusCounts,
+		@JsonProperty("stop_reason") String stopReason,
+		@JsonProperty("public_failure_reason") String publicFailureReason) { }
 	public record Meta(@JsonProperty("execution_id") String executionId) { }
 	public enum JobStatus {
-		QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED;
+		QUEUED, LEASED, RUNNING, PAUSED, SUCCEEDED, FAILED, CANCELLED;
 		@JsonCreator
 		public static JobStatus parse(String value) {
 			if(value==null||value.isBlank()) throw new IllegalArgumentException("job status is required");

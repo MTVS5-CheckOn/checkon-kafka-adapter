@@ -6,6 +6,10 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.client.ExpectedCount.once;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.http.HttpMethod.POST;
+import static org.springframework.http.HttpStatus.CONFLICT;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -67,6 +71,27 @@ class HttpAiProblemClientTest {
 			.isInstanceOf(AiProblemClientException.class)
 			.satisfies(exception -> assertThat(((AiProblemClientException)exception).code())
 				.isEqualTo("AI_HTTP_404"));
+		server.verify();
+	}
+
+	@Test
+	@DisplayName("Given stale revision 응답 When AI 수정을 호출하면 Then 충돌 reason과 현재 revision 번호를 보존한다")
+	void preservesRevisionConflictDetails() {
+		// Given
+		server.expect(once(),requestTo("http://ai.example.test/v1/problems/set-1/items/0/revisions"))
+			.andExpect(method(POST)).andExpect(header("X-Tenant-Id",headers.tenantAlias()))
+			.andExpect(header("X-Request-Id",headers.requestId())).andExpect(header("Idempotency-Key",headers.idempotencyKey()))
+			.andRespond(withStatus(CONFLICT).contentType(APPLICATION_JSON).body("""
+				{"error":{"code":"REVISION_CONFLICT","message":"conflict",
+				 "detail":{"reason":"stale_base_revision","current_revision_no":2}}}
+				"""));
+
+		// When/Then
+		assertThatThrownBy(()->client.revise("set-1",0,
+			"{\"base_revision_no\":1,\"revision_kind\":\"ai_refine\",\"instruction\":\"수정\"}",headers))
+			.isInstanceOf(AiProblemClientException.class).satisfies(exception->{var failure=(AiProblemClientException)exception;
+				assertThat(failure.code()).isEqualTo("REVISION_CONFLICT"); assertThat(failure.detailReason()).isEqualTo("stale_base_revision");
+				assertThat(failure.currentRevisionNo()).isEqualTo(2); assertThat(failure.isTransientFailure()).isFalse();});
 		server.verify();
 	}
 }

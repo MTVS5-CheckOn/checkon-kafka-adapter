@@ -42,7 +42,7 @@ class RuntimeConfigurationValidatorTest {
 		var riskKafka=new RiskDetectionKafkaProperties(kafka,"requested","completed","failed","group",
 			Duration.ofSeconds(1),Duration.ofSeconds(30),Duration.ofSeconds(1),Duration.ofSeconds(10),8);
 		var problem=new ProblemGenerationProperties(false,"","/v1/problems",Duration.ofSeconds(2),Duration.ofMinutes(6),
-			Duration.ofSeconds(1),5,Duration.ofSeconds(3),Duration.ofSeconds(300),Duration.ofMinutes(21),3145728);
+			Duration.ofSeconds(1),5,Duration.ofSeconds(3),Duration.ofSeconds(300),65536,1048576);
 		var problemKafka=new ProblemGenerationKafkaProperties(false,"requests","results","group",Duration.ofSeconds(1),
 			Duration.ofSeconds(30),Duration.ofSeconds(5),Duration.ofSeconds(10),8);
 		var counselHttp=new AiCounselDraftHttpProperties(false,"","/v1/counsel/drafts",Duration.ofSeconds(2),Duration.ofSeconds(500));

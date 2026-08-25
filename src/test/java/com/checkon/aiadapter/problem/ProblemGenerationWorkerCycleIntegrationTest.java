@@ -92,6 +92,8 @@ class ProblemGenerationWorkerCycleIntegrationTest {
 	void clean() {
 		jdbc.update("DELETE FROM outbox_publish_attempt WHERE worker_kind='problem_generation'");
 		jdbc.update("DELETE FROM problem_generation_outbox");
+		jdbc.update("DELETE FROM problem_generation_revision_attempt");
+		jdbc.update("DELETE FROM problem_generation_revision_inbox");
 		jdbc.update("DELETE FROM problem_generation_attempt");
 		jdbc.update("DELETE FROM problem_generation_request_inbox");
 	}
@@ -128,16 +130,18 @@ class ProblemGenerationWorkerCycleIntegrationTest {
 			assertThat(worker.processOne()).isTrue();
 			jdbc.update("UPDATE problem_generation_request_inbox SET next_attempt_at=now()-interval '5 seconds'");
 			assertThat(worker.processOne()).isTrue();
+			assertThat(jdbc.queryForObject("SELECT count(*) FROM problem_generation_outbox",Integer.class)).isEqualTo(3);
 			assertThat(outbox.publishOne()).isTrue();
-			ConsumerRecord<String, String> result = pollOne(consumer, Duration.ofSeconds(15));
+			assertThat(jdbc.queryForObject("SELECT status FROM problem_generation_request_inbox",String.class)).isEqualTo("OUTCOME_PENDING");
+			assertThat(outbox.publishOne()).isTrue(); assertThat(outbox.publishOne()).isTrue();
+			List<String> results = poll(consumer,3,Duration.ofSeconds(15));
 
 			// Then
-			assertThat(result).isNotNull();
-			assertThat(result.key()).isEqualTo(TENANT);
-			assertThat(result.value())
-				.contains("worker_job.succeeded", "cycle-job", "cycle-post-execution",
-					"cycle-set", "cycle-item", "사이클 문제","generation_exhausted","\"item\": null")
-				.doesNotContain("unstable-get-execution", "another-unstable-get-execution");
+			assertThat(results).hasSize(3);
+			assertThat(results).anySatisfy(value->assertThat(value).contains("worker_job.succeeded","cycle-set").doesNotContain("사이클 문제"));
+			assertThat(results).anySatisfy(value->assertThat(value).contains("problem_generation.slot.detail","cycle-item","사이클 문제"));
+			assertThat(results).anySatisfy(value->assertThat(value).contains("problem_generation.slot.detail","generation_exhausted","\"item\": null"));
+			assertThat(results).allSatisfy(value->assertThat(value).doesNotContain("unstable-get-execution","another-unstable-get-execution"));
 			assertThat(jdbc.queryForObject(
 				"SELECT status FROM problem_generation_request_inbox", String.class))
 				.isEqualTo("OUTCOME_PUBLISHED");
@@ -172,10 +176,17 @@ class ProblemGenerationWorkerCycleIntegrationTest {
 		return null;
 	}
 
+	private List<String> poll(KafkaConsumer<String,String> consumer,int expected,Duration timeout){
+		List<String> values=new java.util.ArrayList<>(); Instant deadline=Instant.now().plus(timeout);
+		while(Instant.now().isBefore(deadline)&&values.size()<expected)
+			for(ConsumerRecord<String,String> record:consumer.poll(Duration.ofMillis(500))){assertThat(record.key()).isEqualTo(TENANT);values.add(record.value());}
+		return values;
+	}
+
 	private String requestEvent() {
 		return """
 			{"event_id":"01980000-0000-7000-8000-000000000021","event_type":"problem_generation.requested",
-			 "occurred_at":"2026-08-13T00:00:00Z","tenant_id":"%s","schema_version":"pg-child-request-1",
+			 "occurred_at":"2026-08-13T00:00:00Z","tenant_id":"%s","schema_version":"pg-child-request-2",
 			 "correlation_id":"01980000-0000-7000-8000-000000000022","payload":{
 			 "problem_request_id":"01980000-0000-7000-8000-000000000022",
 			 "problem_execution_id":"01980000-0000-7000-8000-000000000023","target_index":0,

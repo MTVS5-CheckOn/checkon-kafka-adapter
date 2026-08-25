@@ -31,7 +31,7 @@ class ProblemGenerationRequestDecoderTest {
 		return """
 			{"event_id":"01980000-0000-7000-8000-000000000001",
 			 "event_type":"problem_generation.requested","occurred_at":"2026-08-13T00:00:00Z",
-			 "tenant_id":"%s","schema_version":"pg-child-request-1",
+			 "tenant_id":"%s","schema_version":"pg-child-request-2",
 			 "correlation_id":"01980000-0000-7000-8000-000000000002","payload":{
 			  "problem_request_id":"01980000-0000-7000-8000-000000000002",
 			  "problem_execution_id":"01980000-0000-7000-8000-000000000003","target_index":0,

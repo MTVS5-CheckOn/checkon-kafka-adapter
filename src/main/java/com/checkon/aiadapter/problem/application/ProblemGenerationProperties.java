@@ -16,8 +16,8 @@ public record ProblemGenerationProperties(
 	@DefaultValue("5") int maxAttempts,
 	@DefaultValue("3s") Duration connectTimeout,
 	@DefaultValue("30s") Duration readTimeout,
-	@DefaultValue("21m") Duration maxElapsed,
-	@DefaultValue("3145728") int maxNormalizedResultBytes
+	@DefaultValue("65536") int maxReferenceEventBytes,
+	@DefaultValue("1048576") int maxDetailEventBytes
 ) {
 	public ProblemGenerationProperties {
 		problemsPath = requirePath(problemsPath);
@@ -26,9 +26,9 @@ public record ProblemGenerationProperties(
 		retryInitialDelay = positive(retryInitialDelay, "retryInitialDelay");
 		connectTimeout = positive(connectTimeout, "connectTimeout");
 		readTimeout = positive(readTimeout, "readTimeout");
-		maxElapsed = positive(maxElapsed,"maxElapsed");
 		if (maxAttempts < 1 || maxAttempts > 20) throw new IllegalArgumentException("maxAttempts must be 1..20");
-		if(maxNormalizedResultBytes<1024) throw new IllegalArgumentException("maxNormalizedResultBytes must be at least 1024");
+		if(maxReferenceEventBytes<1024||maxDetailEventBytes<1024)
+			throw new IllegalArgumentException("problem generation event byte limits must be at least 1024");
 	}
 
 	public Duration retryDelayAfter(int attempts) {

@@ -18,7 +18,8 @@ Adapter Outbox -> completed/failed topic -> CheckOn Backend
 - PostgreSQL Outbox와 브로커 확인 응답 기반 completed/failed 발행
 - 요청 DLT, stale lock 복구, 동일 결과 이벤트 ID 재발행
 - Testcontainers Kafka/PostgreSQL 수직 통합 검증
-- 문제 출제 child Kafka 요청, AI 제출·polling·items 조회, 결과 Outbox 발행
+- 문제 출제 `pg-child-request-2` 요청, 5영역 AI 제출·무기한 reconciliation polling
+- terminal 참조·slot 상세 분리 Outbox와 `ai_refine` revision Inbox/Outbox
 - AI POST `execution_id` 정본 영속화와 GET 식별자 변동 차단
 - Inbox/Outbox 단조 증가 `claim_version` fencing과 기능별 attempt 이력
 - 위험 탐지·문제 출제·Outbox 발행의 독립 bounded scheduler
@@ -56,14 +57,12 @@ AI_RISK_DETECTION_ENABLED=true
 AI_RISK_DETECTION_WORKER_ENABLED=true
 ```
 
-문제 출제 한 사이클은 아래 두 값을 함께 활성화합니다. AI팀의 최종 노드 카탈로그가
-현재 기본값과 다르면 두 node 환경변수도 함께 교체합니다.
+문제 출제 한 사이클은 아래 두 값을 함께 활성화합니다. 출제 node와 영역별 자료는
+Backend가 진단·교사 선택 결과를 `pg-child-request-2`에 담아 전달하며 Adapter가 임의로 고르지 않습니다.
 
 ```text
 PROBLEM_GENERATION_KAFKA_ENABLED=true
 AI_PROBLEM_GENERATION_WORKER_ENABLED=true
-AI_PROBLEM_GENERATION_LANGUAGE_CONCEPT_NODE=language.grammar.phonological_change
-AI_PROBLEM_GENERATION_LANGUAGE_INFER_NODE=language.grammar.phonological_change
 ```
 
 CheckOn Backend의 `RISK_DETECTION_HTTP_ADAPTER_ENABLED`는 반드시 `false`로 둡니다. 독립 Adapter와 Backend 내장 fallback을 동시에 켜면 같은 requested 이벤트가 두 번 처리됩니다.
@@ -82,6 +81,8 @@ AI HTTP 호출은 HTTP/1.1로 고정합니다. 현재 AI 로컬 서버는 JDK HT
 - stale reclaim은 이전 미종료 attempt를 `SUPERSEDED`로 남기며 늦은 Worker 결과는 fenced transition에서 거절됩니다.
 - AI 호출 성공 후 프로세스가 종료되면 stale lock 복구 과정에서 같은 `Idempotency-Key`로 다시 호출될 수 있습니다. 따라서 AI 서버의 멱등성 보장이 운영 활성화의 선결 조건입니다.
 - completed/failed 결과는 업무 상태와 같은 트랜잭션에서 Outbox에 기록합니다.
+- 문제 출제 성공은 64 KiB 이하 terminal 참조 이벤트와 slot별 1 MiB 이하 상세 이벤트로 나누고,
+  모든 terminal/slot 이벤트의 broker ack가 끝나야 요청을 발행 완료로 표시합니다.
 - Kafka 브로커가 발행을 확인하기 전에는 결과를 완료로 표시하지 않습니다.
 - payload 전체와 개인정보는 운영 로그에 남기지 않습니다.
 
