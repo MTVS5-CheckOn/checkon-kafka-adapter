@@ -68,6 +68,27 @@ class RestInquiryClassificationProxyTest {
 		}
 
 		@Test
+		@DisplayName("When AI 성공 응답에 내부 헤더가 있으면 Then JSON Content-Type만 보존한다")
+		void keepsJsonContentTypeWithoutRelayingUpstreamHeaders() {
+			String responseBody = "{\"data\":{\"classified\":true}}";
+			server.expect(once(), requestTo(BASE_URL + "/v1/classify"))
+				.andRespond(withSuccess(responseBody, APPLICATION_JSON)
+					.header("X-Upstream-Internal", "hidden"));
+
+			var response = proxy.classify(
+				"{\"inquiry_ref\":\"iq_204\",\"body_text\":\"문의\"}",
+				new InquiryClassificationProxy.Headers(
+					"tn_0123456789abcdef0123456789abcdef", "req-headers-2041")
+			);
+
+			assertThat(response.getStatusCode()).isEqualTo(OK);
+			assertThat(response.getBody()).isEqualTo(responseBody);
+			assertThat(response.getHeaders().getContentType()).isEqualTo(APPLICATION_JSON);
+			assertThat(response.getHeaders().getFirst("X-Upstream-Internal")).isNull();
+			server.verify();
+		}
+
+		@Test
 		@DisplayName("When AI가 계약 오류를 반환하면 Then 상태와 본문을 그대로 전달한다")
 		void relaysAiErrorStatusAndBody() {
 			String payload = "{\"inquiry_ref\":\"iq_205\",\"body_text\":\"문의\"}";

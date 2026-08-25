@@ -7,6 +7,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 import com.checkon.aiadapter.counsel.proxy.SynchronousProxyFailureResponse;
+import com.checkon.aiadapter.counsel.proxy.SynchronousProxySuccessResponse;
 
 final class RestInquiryClassificationProxy implements InquiryClassificationProxy {
 
@@ -27,7 +28,7 @@ final class RestInquiryClassificationProxy implements InquiryClassificationProxy
 	@Override
 	public ResponseEntity<String> classify(String payload, Headers headers) {
 		try {
-			return restClient.post()
+			ResponseEntity<String> upstream = restClient.post()
 				.uri(classifyPath)
 				.header(TENANT_ID_HEADER, headers.tenantAlias())
 				.header(REQUEST_ID_HEADER, headers.requestId())
@@ -35,6 +36,7 @@ final class RestInquiryClassificationProxy implements InquiryClassificationProxy
 				.body(payload)
 				.retrieve()
 				.toEntity(String.class);
+			return SynchronousProxySuccessResponse.from(upstream);
 		}
 		catch (RestClientResponseException exception) {
 			return ResponseEntity.status(exception.getStatusCode()).body(exception.getResponseBodyAsString());
